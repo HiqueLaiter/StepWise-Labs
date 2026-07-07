@@ -1,14 +1,6 @@
-Com certeza! Como o público-alvo são profissionais de saúde (que geralmente não têm familiaridade com programação ou terminais), o ideal é que o README seja o mais visual, explicativo e à prova de erros possível.
+# 🦵 StepWise Analytics
 
-Eu peguei o seu passo a passo e adicionei algumas explicações de contexto, pré-requisitos (como avisar que eles precisam ter o Python instalado) e um guia rápido de como usar a interface.
-
-Aqui está uma sugestão de `README.md` estruturada e pronta para você copiar e colar no seu repositório:
-
----
-
-# 🦵 StepWise Analytics — Dashboard de Reabilitação
-
-Bem-vindo ao **StepWise Analytics**! Este dashboard foi desenvolvido para auxiliar fisioterapeutas e terapeutas ocupacionais na visualização e análise de dados cinemáticos de reabilitação.
+Bem-vindo ao **StepWise Analytics**! Este dashboard foi desenvolvido para auxiliar profissionais da saúde na visualização e análise de dados cinemáticos de reabilitação.
 
 O sistema traduz dados brutos (capturados por visão computacional via KinesiOS ou Brainn_XR) em indicadores objetivos do **progresso terapêutico**, facilitando a tomada de decisão clínica.
 
@@ -17,8 +9,12 @@ O sistema traduz dados brutos (capturados por visão computacional via KinesiOS 
 ## 🛠️ Pré-requisitos
 
 Antes de começar, certifique-se de que você tem instalado no seu computador:
-
 1. **Python** (versão 3.8 ou superior).
+   * **Como verificar:** Abra o terminal (ou Prompt de Comando) e digite o seguinte comando e aperte Enter:
+     ```bash
+     python --version
+     ```
+     *(Se o terminal responder com algo como `Python 3.10.x`, você já tem o Python instalado. Se aparecer uma mensagem de erro ou abrir a loja de aplicativos do Windows, será necessário baixar e instalar o Python pelo site oficial).*
 2. Um editor de código, recomendamos o **VS Code** (Visual Studio Code).
 
 ---
@@ -32,14 +28,12 @@ Siga o passo a passo abaixo no terminal do seu editor de código (VS Code):
 Você pode baixar o projeto de duas formas:
 
 * **Pelo navegador:** Clique no botão verde `<> Code` no topo desta página e selecione **"Download ZIP"**. Extraia a pasta no seu computador e abra essa pasta no VS Code.
-* **Pelo Terminal (Git):** ```bash
-git clone [COLE O LINK DO SEU REPOSITÓRIO AQUI]
+* **Pelo Terminal (Git):**
+  
+```bash
+git clone https://github.com/HiqueLaiter/StepWise-Labs.git
+
 ```
-
-
-```
-
-
 
 ### 2. Abra a pasta no terminal
 
@@ -89,7 +83,7 @@ source .venv/Scripts/activate
 
 
 
-*(Se der certo, você verá um `(.venv)` verde aparecendo no início da linha do seu terminal).*
+*(Se der certo, você verá um `(.venv)` aparecendo no início da linha do seu terminal).*
 
 ### 5. Instale as dependências
 
