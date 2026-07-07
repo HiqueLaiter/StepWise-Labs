@@ -53,7 +53,7 @@ with abas[0]:
 
         | Aba | Descrição |
         |---|---|
-        | 🦵 Membros Inferiores | Análise da marcha estacionária: flexão de quadril e joelho, simetria, suavidade e compensação postural |
+        | 🦵 Membros Inferiores | Análise da marcha estacionária: flexão de quadril e joelho |
 
         ---
 

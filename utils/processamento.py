@@ -5,7 +5,7 @@ import pandas as pd
 # =============================================================================
 # COLUNAS ESPERADAS NO ARQUIVO DE DADOS
 # =============================================================================
-# O software BRAINN_XR exporta os seguintes nomes de colunas (após tratamento):
+# O software KinesiOS exporta os seguintes nomes de colunas (após tratamento):
 #   Frame
 #   Range of Motion Hip (Left)
 #   Range of Motion Hip (Right)
@@ -204,60 +204,6 @@ def picos_para_dataframe(picos: list[dict]) -> pd.DataFrame:
 # 4. MÉTRICAS BIOMECÂNICAS
 # =============================================================================
 
-def calcular_indice_simetria(picos_esq: list[dict], picos_dir: list[dict]) -> float:
-    """
-    Calcula o índice de simetria bilateral entre os membros inferiores.
-
-    Baseado na razão entre as amplitudes médias de cada lado. Um valor de
-    1.0 indica simetria perfeita; valores abaixo de 0.85 são clinicamente
-    relevantes como assimetria.
-
-    Parâmetros:
-        picos_esq: Lista de picos do membro esquerdo.
-        picos_dir: Lista de picos do membro direito.
-
-    Retorna:
-        Índice de simetria entre 0.0 e 1.0.
-    """
-    if not picos_esq or not picos_dir:
-        return 0.0
-
-    media_esq = np.mean([p['amplitude_maxima'] for p in picos_esq])
-    media_dir = np.mean([p['amplitude_maxima'] for p in picos_dir])
-
-    if max(media_esq, media_dir) == 0:
-        return 0.0
-
-    return float(min(media_esq, media_dir) / max(media_esq, media_dir))
-
-
-def calcular_jerk(dados: pd.Series, fps: float) -> float:
-    """
-    Calcula o jerk médio quadrático (RMS) do sinal cinemático.
-
-    O jerk é a derivada da aceleração (terceira derivada da posição), e
-    quantifica a suavidade do movimento. Valores menores indicam movimentos
-    mais fluidos e controlados — um biomarcador importante para avaliar
-    a qualidade da marcha em pacientes neurofuncionais.
-
-    Parâmetros:
-        dados: Série de ângulos ao longo do tempo.
-        fps: Taxa de quadros por segundo (necessária para escalar as derivadas).
-
-    Retorna:
-        Jerk RMS (graus/s³). Quanto menor, mais suave o movimento.
-    """
-    if len(dados) < 4:
-        return 0.0
-
-    dt = 1.0 / fps
-    velocidade    = np.gradient(dados.values, dt)
-    aceleracao    = np.gradient(velocidade, dt)
-    jerk          = np.gradient(aceleracao, dt)
-
-    return float(np.sqrt(np.mean(jerk ** 2)))
-
-
 def calcular_amplitude_sessao(dados: pd.Series) -> dict:
     """
     Calcula a amplitude média e máxima do sinal ao longo de toda a sessão
@@ -336,11 +282,6 @@ def gerar_resumo_sessao(df: pd.DataFrame, fps: float, limiares: dict) -> dict:
     de AM: recebe o DataFrame bruto e os limiares definidos pelo clínico,
     e retorna todas as métricas calculadas.
 
-    O tornozelo é tratado como sinal de compensação postural: não extraímos
-    picos dele, mas calculamos sua amplitude média e jerk para que o
-    fisioterapeuta possa identificar se o paciente está compensando a falta
-    de flexão de quadril/joelho com movimentos excessivos do tornozelo.
-
     Parâmetros:
         df: DataFrame carregado via carregar_arquivo().
         fps: FPS obtido via calcular_fps() — 28.0 para o Kinect.
@@ -353,8 +294,7 @@ def gerar_resumo_sessao(df: pd.DataFrame, fps: float, limiares: dict) -> dict:
     Retorna:
         Dicionário aninhado com todas as métricas da sessão, incluindo:
         picos, amplitude (média/máxima de quadril e joelho), tempo de
-        execução da sessão (s), simetria, jerk, consistência temporal e
-        compensação do tornozelo.
+        execução da sessão (s) e consistência temporal.
     """
     limiar_quadril = limiares.get('quadril', 45.0)
     limiar_joelho  = limiares.get('joelho',  30.0)
@@ -371,31 +311,11 @@ def gerar_resumo_sessao(df: pd.DataFrame, fps: float, limiares: dict) -> dict:
     amplitude_joelho_esq  = calcular_amplitude_sessao(df[COL_JOELHO_ESQ])
     amplitude_joelho_dir  = calcular_amplitude_sessao(df[COL_JOELHO_DIR])
 
-    # --- Simetria bilateral ---
-    simetria_quadril = calcular_indice_simetria(picos_quadril_esq, picos_quadril_dir)
-    simetria_joelho  = calcular_indice_simetria(picos_joelho_esq,  picos_joelho_dir)
-
-    # --- Jerk — suavidade (quadril e joelho) ---
-    jerk_quadril_esq = calcular_jerk(df[COL_QUADRIL_ESQ], fps)
-    jerk_quadril_dir = calcular_jerk(df[COL_QUADRIL_DIR], fps)
-    jerk_joelho_esq  = calcular_jerk(df[COL_JOELHO_ESQ],  fps)
-    jerk_joelho_dir  = calcular_jerk(df[COL_JOELHO_DIR],  fps)
-
     # --- Consistência temporal dos picos ---
     consistencia_quadril_esq = calcular_consistencia_temporal(picos_quadril_esq)
     consistencia_quadril_dir = calcular_consistencia_temporal(picos_quadril_dir)
     consistencia_joelho_esq  = calcular_consistencia_temporal(picos_joelho_esq)
     consistencia_joelho_dir  = calcular_consistencia_temporal(picos_joelho_dir)
-
-    # --- Tornozelo: sinal de compensação (amplitude média + jerk, sem picos) ---
-    compensacao_tornozelo = {
-        'amplitude_media_esq': float(df[COL_TORNOZELO_ESQ].mean()),
-        'amplitude_media_dir': float(df[COL_TORNOZELO_DIR].mean()),
-        'amplitude_max_esq':   float(df[COL_TORNOZELO_ESQ].max()),
-        'amplitude_max_dir':   float(df[COL_TORNOZELO_DIR].max()),
-        'jerk_esq':            calcular_jerk(df[COL_TORNOZELO_ESQ], fps),
-        'jerk_dir':            calcular_jerk(df[COL_TORNOZELO_DIR], fps),
-    }
 
     return {
         'picos': {
@@ -411,23 +331,12 @@ def gerar_resumo_sessao(df: pd.DataFrame, fps: float, limiares: dict) -> dict:
             'joelho_dir':  amplitude_joelho_dir,
         },
         'tempo_execucao_seg': float(len(df) / fps),
-        'simetria': {
-            'quadril': simetria_quadril,
-            'joelho':  simetria_joelho,
-        },
-        'jerk': {
-            'quadril_esq': jerk_quadril_esq,
-            'quadril_dir': jerk_quadril_dir,
-            'joelho_esq':  jerk_joelho_esq,
-            'joelho_dir':  jerk_joelho_dir,
-        },
         'consistencia': {
             'quadril_esq': consistencia_quadril_esq,
             'quadril_dir': consistencia_quadril_dir,
             'joelho_esq':  consistencia_joelho_esq,
             'joelho_dir':  consistencia_joelho_dir,
         },
-        'compensacao_tornozelo': compensacao_tornozelo,
         'n_frames': len(df),
         'fps':      fps,
         'limiares': limiares,
