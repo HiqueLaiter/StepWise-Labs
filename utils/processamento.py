@@ -258,6 +258,33 @@ def calcular_jerk(dados: pd.Series, fps: float) -> float:
     return float(np.sqrt(np.mean(jerk ** 2)))
 
 
+def calcular_amplitude_sessao(dados: pd.Series) -> dict:
+    """
+    Calcula a amplitude média e máxima do sinal ao longo de toda a sessão
+    (independentemente de picos), para quadril ou joelho.
+
+    Diferente da amplitude por pico (que reflete só os movimentos válidos
+    acima do limiar), esta métrica dá uma visão geral do ângulo praticado
+    durante toda a sessão — útil como referência rápida para o terapeuta,
+    mesmo quando poucos ou nenhum pico é detectado.
+
+    Parâmetros:
+        dados: Série de ângulos ao longo do tempo (ex: quadril esquerdo).
+
+    Retorna:
+        Dicionário com:
+            - 'media': amplitude média da sessão (graus)
+            - 'maxima': amplitude máxima atingida na sessão (graus)
+    """
+    if len(dados) == 0:
+        return {'media': 0.0, 'maxima': 0.0}
+
+    return {
+        'media':  float(dados.mean()),
+        'maxima': float(dados.max()),
+    }
+
+
 def calcular_consistencia_temporal(picos: list[dict]) -> dict:
     """
     Avalia a consistência temporal entre os obstáculos transpostos.
@@ -324,7 +351,10 @@ def gerar_resumo_sessao(df: pd.DataFrame, fps: float, limiares: dict) -> dict:
                   }
 
     Retorna:
-        Dicionário aninhado com todas as métricas da sessão.
+        Dicionário aninhado com todas as métricas da sessão, incluindo:
+        picos, amplitude (média/máxima de quadril e joelho), tempo de
+        execução da sessão (s), simetria, jerk, consistência temporal e
+        compensação do tornozelo.
     """
     limiar_quadril = limiares.get('quadril', 45.0)
     limiar_joelho  = limiares.get('joelho',  30.0)
@@ -334,6 +364,12 @@ def gerar_resumo_sessao(df: pd.DataFrame, fps: float, limiares: dict) -> dict:
     picos_quadril_dir = extrair_picos_marcha(df[COL_QUADRIL_DIR], fps, limiar_quadril)
     picos_joelho_esq  = extrair_picos_marcha(df[COL_JOELHO_ESQ],  fps, limiar_joelho)
     picos_joelho_dir  = extrair_picos_marcha(df[COL_JOELHO_DIR],  fps, limiar_joelho)
+
+    # --- Amplitude de sessão (média e máxima) — quadril e joelho ---
+    amplitude_quadril_esq = calcular_amplitude_sessao(df[COL_QUADRIL_ESQ])
+    amplitude_quadril_dir = calcular_amplitude_sessao(df[COL_QUADRIL_DIR])
+    amplitude_joelho_esq  = calcular_amplitude_sessao(df[COL_JOELHO_ESQ])
+    amplitude_joelho_dir  = calcular_amplitude_sessao(df[COL_JOELHO_DIR])
 
     # --- Simetria bilateral ---
     simetria_quadril = calcular_indice_simetria(picos_quadril_esq, picos_quadril_dir)
@@ -368,6 +404,13 @@ def gerar_resumo_sessao(df: pd.DataFrame, fps: float, limiares: dict) -> dict:
             'joelho_esq':  picos_joelho_esq,
             'joelho_dir':  picos_joelho_dir,
         },
+        'amplitude': {
+            'quadril_esq': amplitude_quadril_esq,
+            'quadril_dir': amplitude_quadril_dir,
+            'joelho_esq':  amplitude_joelho_esq,
+            'joelho_dir':  amplitude_joelho_dir,
+        },
+        'tempo_execucao_seg': float(len(df) / fps),
         'simetria': {
             'quadril': simetria_quadril,
             'joelho':  simetria_joelho,

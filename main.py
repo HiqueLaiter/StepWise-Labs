@@ -1,7 +1,6 @@
 import streamlit as st
 from PIL import Image
 from views import visualizacao_obstacles
-from views import visualizacao_estatistica  # view da IC — membros superiores
 
 # =============================================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -27,8 +26,6 @@ st.image("assets/SW w png.png", width=300)
 abas = st.tabs([
     "🏠 Início",
     "🦵 Membros Inferiores",
-    "🦾 Membros Superiores",
-    "🤖 Modelo Preditivo",
 ])
 
 # -----------------------------------------------------------------------
@@ -57,8 +54,6 @@ with abas[0]:
         | Aba | Descrição |
         |---|---|
         | 🦵 Membros Inferiores | Análise da marcha estacionária: flexão de quadril e joelho, simetria, suavidade e compensação postural |
-        | 🦾 Membros Superiores | Análise dos ombros e cotovelos durante o e-Puzzle |
-        | 🤖 Modelo Preditivo | Resultados dos modelos de Aprendizado de Máquina (busca de padrões e compensação de movimento) |
 
         ---
 
@@ -73,20 +68,3 @@ with abas[0]:
 # -----------------------------------------------------------------------
 with abas[1]:
     visualizacao_obstacles.carregar()
-
-# -----------------------------------------------------------------------
-# ABA 3 — Membros Superiores (IC anterior)
-# -----------------------------------------------------------------------
-with abas[2]:
-    visualizacao_estatistica.carregar()
-
-# -----------------------------------------------------------------------
-# ABA 4 — Modelo Preditivo (em desenvolvimento)
-# -----------------------------------------------------------------------
-with abas[3]:
-    st.markdown("## 🤖 Modelo Preditivo")
-    st.info(
-        "Esta seção está em desenvolvimento. "
-        "Os modelos LSTM, CNN 1D e SVM serão integrados aqui após o treinamento.",
-        icon="🔧",
-    )

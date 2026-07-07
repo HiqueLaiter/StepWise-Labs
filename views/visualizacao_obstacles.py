@@ -12,6 +12,7 @@ from utils.processamento import (
     extrair_picos_marcha,
     calcular_jerk,
     calcular_consistencia_temporal,
+    calcular_amplitude_sessao,
     COL_QUADRIL_ESQ, COL_QUADRIL_DIR,
     COL_JOELHO_ESQ,  COL_JOELHO_DIR,
     COL_TORNOZELO_ESQ, COL_TORNOZELO_DIR,
@@ -32,19 +33,11 @@ def _aba_metricas_info():
     Explica ao fisioterapeuta o que é cada métrica calculada pelo dashboard,
     por que ela é relevante e como interpretá-la clinicamente.
     """
-<<<<<<< Updated upstream
     st.markdown("## 📖 Guia das métricas")
-=======
-    st.markdown("## 📖 Guia das Métricas")
->>>>>>> Stashed changes
     st.markdown(
         "Esta seção explica cada indicador calculado pelo dashboard, "
         "para que o profissional de saúde possa interpretar os resultados com segurança."
     )
-<<<<<<< Updated upstream
-=======
-    st.markdown("---")
->>>>>>> Stashed changes
 
     with st.expander("🧬 O que são Métricas Biomecânicas?", expanded=True):
         st.markdown(
@@ -62,10 +55,44 @@ def _aba_metricas_info():
             """
         )
 
-<<<<<<< Updated upstream
-=======
-    st.markdown("---")
->>>>>>> Stashed changes
+
+    with st.expander("⏱️ Tempo de Execução da Sessão", expanded=False):
+        st.markdown(
+            """
+            **O que é:**
+            A duração total da sessão, calculada a partir do número de frames capturados
+            dividido pela taxa de captura do Kinect (28 FPS).
+
+            **Por que importa:**
+            Serve como referência rápida para o terapeuta comparar o tempo gasto pelo
+            paciente para completar o protocolo entre sessões. Junto com o número de
+            picos detectados, ajuda a diferenciar um paciente que executa poucos
+            movimentos rapidamente de um que executa o mesmo número de movimentos,
+            porém com mais pausas ou lentidão — informação relevante para fadiga,
+            dor ou evolução do condicionamento motor.
+            """
+        )
+
+    with st.expander("📏 Amplitude de Movimento (Média e Máxima)", expanded=False):
+        st.markdown(
+            """
+            **O que é:**
+            Diferente da amplitude por pico (que só considera os movimentos que
+            ultrapassaram o limiar clínico), esta métrica resume o ângulo praticado
+            durante **toda a sessão**, incluindo os momentos entre movimentos:
+
+            - **Amplitude Máxima:** maior ângulo atingido em qualquer instante da sessão.
+            - **Amplitude Média:** ângulo médio mantido ao longo de toda a sessão.
+
+            **Por que importa:**
+            É um indicador rápido de capacidade articular, mesmo quando poucos picos
+            são detectados (por exemplo, se o limiar estiver muito alto para aquele
+            paciente). A amplitude máxima mostra o potencial de flexão observado, e a
+            amplitude média mostra o padrão predominante durante o exercício. Acompanhar
+            esses dois valores entre sessões ajuda a visualizar ganho de mobilidade
+            mesmo antes de mudanças nos picos ou na simetria.
+            """
+        )
 
     with st.expander("⚖️ Índice de Simetria", expanded=False):
         st.markdown(
@@ -332,6 +359,23 @@ def _secao_metricas_bilateral(resumo: dict, label: str = ""):
         "Consulte a aba **📖 Guia de Métricas** para uma explicação detalhada de cada um."
     )
 
+    st.markdown("**Tempo de Execução da Sessão**")
+    st.metric("Duração total", f"{resumo['tempo_execucao_seg']:.1f}s")
+
+    st.markdown("---")
+    st.markdown("**Amplitude de Movimento** *(sobre toda a sessão, não apenas os picos)*")
+    amp = resumo['amplitude']
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("Quadril Esq. — Máx.", f"{amp['quadril_esq']['maxima']:.1f}°")
+    c2.metric("Quadril Dir. — Máx.", f"{amp['quadril_dir']['maxima']:.1f}°")
+    c3.metric("Joelho Esq. — Máx.",  f"{amp['joelho_esq']['maxima']:.1f}°")
+    c4.metric("Joelho Dir. — Máx.",  f"{amp['joelho_dir']['maxima']:.1f}°")
+    c1.metric("Quadril Esq. — Média", f"{amp['quadril_esq']['media']:.1f}°")
+    c2.metric("Quadril Dir. — Média", f"{amp['quadril_dir']['media']:.1f}°")
+    c3.metric("Joelho Esq. — Média",  f"{amp['joelho_esq']['media']:.1f}°")
+    c4.metric("Joelho Dir. — Média",  f"{amp['joelho_dir']['media']:.1f}°")
+
+    st.markdown("---")
     st.markdown("**Índice de Simetria** *(1.0 = perfeito | < 0.85 = assimetria clínica)*")
     c1, c2 = st.columns(2)
     sim_q, sim_j = resumo['simetria']['quadril'], resumo['simetria']['joelho']
@@ -367,7 +411,7 @@ def _secao_metricas_bilateral(resumo: dict, label: str = ""):
                          f"± {cons[chave]['desvio_duracao']:.2f}s"))
 
 
-def _secao_metricas_unilateral(picos_q, picos_j, sinal_q, sinal_j, fps, lado, label=""):
+def _secao_metricas_unilateral(picos_q, picos_j, sinal_q, sinal_j, fps, lado, tempo_execucao, label=""):
     prefixo = f"{label} — " if label else ""
     st.markdown(f"#### {prefixo}Métricas Biomecânicas — {lado}")
     st.caption(
@@ -375,11 +419,26 @@ def _secao_metricas_unilateral(picos_q, picos_j, sinal_q, sinal_j, fps, lado, la
         "Consulte a aba **📖 Guia de Métricas** para detalhes sobre cada indicador."
     )
 
+    st.markdown("**Tempo de Execução da Sessão**")
+    st.metric("Duração total", f"{tempo_execucao:.1f}s")
+
+    amp_q = calcular_amplitude_sessao(sinal_q)
+    amp_j = calcular_amplitude_sessao(sinal_j)
+
+    st.markdown("---")
+    st.markdown("**Amplitude de Movimento** *(sobre toda a sessão, não apenas os picos)*")
+    c1, c2 = st.columns(2)
+    c1.metric(f"Quadril {lado} — Máx.", f"{amp_q['maxima']:.1f}°")
+    c2.metric(f"Joelho {lado} — Máx.",  f"{amp_j['maxima']:.1f}°")
+    c1.metric(f"Quadril {lado} — Média", f"{amp_q['media']:.1f}°")
+    c2.metric(f"Joelho {lado} — Média",  f"{amp_j['media']:.1f}°")
+
     jerk_q = calcular_jerk(sinal_q, fps)
     jerk_j = calcular_jerk(sinal_j, fps)
     cons_q = calcular_consistencia_temporal(picos_q)
     cons_j = calcular_consistencia_temporal(picos_j)
 
+    st.markdown("---")
     st.markdown("**Jerk RMS** *(°/s³ — quanto menor, mais suave o movimento)*")
     c1, c2 = st.columns(2)
     c1.metric(f"Quadril {lado}", f"{jerk_q:.1f}")
@@ -530,7 +589,10 @@ def _modo_unilateral(limiares: dict):
 
     # Métricas
     st.markdown("---")
-    _secao_metricas_unilateral(picos_q, picos_j, df[col_quadril], df[col_joelho], fps, lado)
+    _secao_metricas_unilateral(
+        picos_q, picos_j, df[col_quadril], df[col_joelho], fps, lado,
+        resumo['tempo_execucao_seg'],
+    )
 
     # Gráficos do lado selecionado
     st.markdown("---")
@@ -676,8 +738,4 @@ def carregar():
             _modo_comparacao(limiares)
 
     with aba_guia:
-<<<<<<< Updated upstream
         _aba_metricas_info()
-=======
-        _aba_metricas_info()
->>>>>>> Stashed changes
