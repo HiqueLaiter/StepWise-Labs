@@ -14,6 +14,7 @@ from utils.processamento import (
     calcular_amplitude_sessao,
     COL_QUADRIL_ESQ, COL_QUADRIL_DIR,
     COL_JOELHO_ESQ,  COL_JOELHO_DIR,
+    COL_TEMPO,
 )
 
 # =============================================================================
@@ -137,7 +138,8 @@ def _aba_metricas_info():
 # =============================================================================
 
 def _tempo_eixo(df: pd.DataFrame, fps: float) -> np.ndarray:
-    return np.arange(len(df)) / fps
+    """Retorna o eixo de tempo já calculado e validado no processamento."""
+    return df[COL_TEMPO].values
 
 
 def _plot_sinal_com_picos(
@@ -327,13 +329,18 @@ def _secao_metricas_unilateral(picos_q, picos_j, sinal_q, sinal_j, lado, tempo_e
 
 def _secao_picos_bilateral(resumo, tempo, df, limiares, label=""):
     prefixo = f"{label} — " if label else ""
+    
+    # Cria um sufixo seguro para as chaves (keys) dos gráficos. 
+    # Vai virar "inicio", "final", ou "unico" se for uma sessão só.
+    sufixo_key = label.lower() if label else "unico"
 
     st.markdown(f"#### {prefixo}Quadril")
     st.plotly_chart(_plot_sinal_com_picos(
         tempo, df[COL_QUADRIL_ESQ], df[COL_QUADRIL_DIR],
         resumo['picos']['quadril_esq'], resumo['picos']['quadril_dir'],
         limiares['quadril'], "Amplitude de Flexão do Quadril",
-    ), use_container_width=True)
+    ), use_container_width=True, key=f"grafico_quadril_{sufixo_key}") # <--- KEY ADICIONADA AQUI
+    
     c1, c2 = st.columns(2)
     with c1:
         st.caption("Picos — Esquerdo")
@@ -349,7 +356,8 @@ def _secao_picos_bilateral(resumo, tempo, df, limiares, label=""):
         tempo, df[COL_JOELHO_ESQ], df[COL_JOELHO_DIR],
         resumo['picos']['joelho_esq'], resumo['picos']['joelho_dir'],
         limiares['joelho'], "Amplitude de Flexão do Joelho",
-    ), use_container_width=True)
+    ), use_container_width=True, key=f"grafico_joelho_{sufixo_key}") # <--- KEY ADICIONADA AQUI
+    
     c1, c2 = st.columns(2)
     with c1:
         st.caption("Picos — Esquerdo")
@@ -357,7 +365,6 @@ def _secao_picos_bilateral(resumo, tempo, df, limiares, label=""):
     with c2:
         st.caption("Picos — Direito")
         _tabela_picos(resumo['picos']['joelho_dir'])
-
 
 # =============================================================================
 # MODO BILATERAL
@@ -508,7 +515,8 @@ def _modo_comparacao(limiares: dict):
 
     # Comparação de amplitudes por pico
     st.markdown("---")
-    st.markdown("#### 📊 Comparação de Amplitudes por Pico")
+    st.markdown("#### 📊 Comparação de amplitudes por pico")
+    st.caption("Mostra os picos identificados nas sessões lado a lado para verificar se houve ganho de amplitude. (Dica: ajuste os limiares antes de fazer a comparação)")
     tab_qe, tab_qd, tab_je, tab_jd = st.tabs([
         "Quadril Esquerdo", "Quadril Direito",
         "Joelho Esquerdo",  "Joelho Direito",
@@ -527,7 +535,7 @@ def _modo_comparacao(limiares: dict):
 
     # Sinais detalhados por sessão
     st.markdown("---")
-    st.markdown("#### 🔍 Sinais Detalhados")
+    st.markdown("#### 🔍 Sinais detalhados")
     aba_i, aba_f = st.tabs(["Sessão Início", "Sessão Final"])
     with aba_i:
         _secao_picos_bilateral(resumo_i, tempo_i, df_i, limiares, label="Início")

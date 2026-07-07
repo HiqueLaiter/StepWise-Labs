@@ -1,55 +1,24 @@
 import numpy as np
 import pandas as pd
 
+# =============================================================================
+# COLUNAS E PADRONIZAÇÃO INTERNA
+# =============================================================================
+COL_QUADRIL_ESQ = 'quadril_esq'
+COL_QUADRIL_DIR = 'quadril_dir'
+COL_JOELHO_ESQ  = 'joelho_esq'
+COL_JOELHO_DIR  = 'joelho_dir'
+COL_TEMPO       = 'tempo_s'
+COL_FPS_BASE    = 'fps_base'
 
 # =============================================================================
-# COLUNAS ESPERADAS NO ARQUIVO DE DADOS
-# =============================================================================
-# O software KinesiOS exporta os seguintes nomes de colunas (após tratamento):
-#   Frame
-#   Range of Motion Hip (Left)
-#   Range of Motion Hip (Right)
-#   Range of Motion Knee (Left)
-#   Range of Motion Knee (Right)
-#   Range of Motion Ankle (Left)   <- monitorado como compensação, não é foco
-#   Range of Motion Ankle (Right)  <- monitorado como compensação, não é foco
-
-COLUNAS_ESPERADAS = [
-    'Frame',
-    'Range of Motion Hip (Left)',
-    'Range of Motion Hip (Right)',
-    'Range of Motion Knee (Left)',
-    'Range of Motion Knee (Right)',
-    'Range of Motion Ankle (Left)',
-    'Range of Motion Ankle (Right)',
-]
-
-# Atalhos internos para facilitar o uso no código
-COL_QUADRIL_ESQ = 'Range of Motion Hip (Left)'
-COL_QUADRIL_DIR = 'Range of Motion Hip (Right)'
-COL_JOELHO_ESQ  = 'Range of Motion Knee (Left)'
-COL_JOELHO_DIR  = 'Range of Motion Knee (Right)'
-COL_TORNOZELO_ESQ = 'Range of Motion Ankle (Left)'
-COL_TORNOZELO_DIR = 'Range of Motion Ankle (Right)'
-
-
-# =============================================================================
-# 1. CARREGAMENTO DO ARQUIVO
+# 1. CARREGAMENTO DO ARQUIVO E DETECÇÃO DA FONTE
 # =============================================================================
 
 def carregar_arquivo(arquivo) -> pd.DataFrame:
     """
-    Carrega um arquivo de dados cinemáticos nos formatos CSV, XLSX ou XLSM.
-
-    Parâmetros:
-        arquivo: objeto de arquivo (ex: st.file_uploader ou caminho string).
-
-    Retorna:
-        DataFrame com os dados carregados e validados.
-
-    Lança:
-        ValueError se o formato não for suportado ou as colunas esperadas
-        não forem encontradas.
+    Carrega um arquivo de dados cinemáticos, detecta automaticamente se a origem
+    é KinesiOS ou Brainn_XR, e padroniza as colunas e o eixo de tempo.
     """
     nome = arquivo.name if hasattr(arquivo, 'name') else str(arquivo)
     extensao = nome.lower().split('.')[-1]
@@ -57,53 +26,87 @@ def carregar_arquivo(arquivo) -> pd.DataFrame:
     if extensao == 'csv':
         df = pd.read_csv(arquivo)
     elif extensao in ('xlsx', 'xlsm'):
-        # O arquivo do BRAINN_XR tem os dados na aba "KinesiOS"
         try:
             df = pd.read_excel(arquivo, sheet_name='KinesiOS', engine='openpyxl')
         except Exception:
-            # Fallback: lê a primeira aba caso o nome mude
             df = pd.read_excel(arquivo, sheet_name=0, engine='openpyxl')
     else:
         raise ValueError(f"Formato '{extensao}' não suportado. Use CSV, XLSX ou XLSM.")
 
-    # Valida se as colunas esperadas estão presentes
-    colunas_faltando = [c for c in COLUNAS_ESPERADAS if c not in df.columns]
-    if colunas_faltando:
+    df = df.dropna(how='all').reset_index(drop=True)
+    colunas_atuais = list(df.columns)
+
+    # ---------------------------------------------------------
+    # Detecção: KINESIOS
+    # ---------------------------------------------------------
+    if 'Range of Motion Hip (Left)' in colunas_atuais:
+        fps_calculado = 28.0
+        df = df.rename(columns={
+            'Range of Motion Hip (Left)':  COL_QUADRIL_ESQ,
+            'Range of Motion Hip (Right)': COL_QUADRIL_DIR,
+            'Range of Motion Knee (Left)': COL_JOELHO_ESQ,
+            'Range of Motion Knee (Right)': COL_JOELHO_DIR,
+        })
+        
+    # ---------------------------------------------------------
+    # Detecção: BRAINN_XR
+    # ---------------------------------------------------------
+    elif 'hipLangle' in colunas_atuais:
+        df = df.rename(columns={
+            'hipLangle':  COL_QUADRIL_ESQ,
+            'hipRangle':  COL_QUADRIL_DIR,
+            'kneeLangle': COL_JOELHO_ESQ,
+            'kneeRangle': COL_JOELHO_DIR,
+        })
+        
+        fps_calculado = 24.0 # Fallback de segurança
+        
+        if 'time' in df.columns:
+            try:
+                # Agrupa pela mudança de segundos para extrair o FPS real
+                df['seconds'] = df['time'].astype(str).str[-2:]
+                df['count'] = (df['seconds'] != df['seconds'].shift(1)).cumsum()
+                result = df.groupby('count').size().reset_index(name='counts')
+                
+                if len(result) > 1:
+                    # Pega o segundo bloco, pois o primeiro pode ser um segundo incompleto
+                    fps_calculado = float(result.loc[1, 'counts'])
+                    
+                # Limpa as colunas temporárias
+                df = df.drop(columns=['seconds', 'count'])
+            except Exception:
+                pass 
+
+    else:
         raise ValueError(
-            f"Colunas não encontradas no arquivo:\n{colunas_faltando}\n\n"
-            f"Colunas presentes: {list(df.columns)}"
+            "Origem de dados não reconhecida.\n"
+            "O arquivo deve conter as colunas do KinesiOS (ex: 'Range of Motion...') "
+            "ou do Brainn_XR (ex: 'hipLangle')."
         )
 
-    # Remove linhas completamente vazias, se houver
-    df = df.dropna(how='all').reset_index(drop=True)
+    # ---------------------------------------------------------
+    # EIXO DE TEMPO SINTÉTICO
+    # ---------------------------------------------------------
+    # Forçamos a criação de uma linha do tempo suave baseada no FPS real detectado.
+    df[COL_TEMPO] = df.index / fps_calculado
+    df[COL_FPS_BASE] = fps_calculado
+
+    # Aplicação da correção de segurança do Pandas 
+    df[COL_TEMPO] = df[COL_TEMPO].fillna(pd.Series(df.index / fps_calculado))
 
     return df
-
 
 # =============================================================================
 # 2. CÁLCULO DE FPS
 # =============================================================================
 
-FPS_KINECT = 28.0  # Taxa de captura do Kinect usada pelo BRAINN_XR
-
-
 def calcular_fps(df: pd.DataFrame) -> float:
     """
-    Retorna a taxa de quadros (FPS) do sensor Kinect integrado ao BRAINN_XR.
-
-    O arquivo exportado contém apenas a coluna 'Frame' como índice sequencial
-    (sem timestamps reais). A taxa de captura do Kinect é fixa em 28 frames
-    por segundo, valor usado para converter frames em segundos em todas as
-    métricas temporais.
-
-    Parâmetros:
-        df: DataFrame carregado (usado apenas para consistência de interface).
-
-    Retorna:
-        28.0 (FPS fixo do Kinect).
+    Retorna o FPS calculado dinamicamente durante a leitura do arquivo.
     """
-    return FPS_KINECT
-
+    if COL_FPS_BASE in df.columns:
+        return float(df[COL_FPS_BASE].iloc[0])
+    return 28.0
 
 # =============================================================================
 # 3. EXTRAÇÃO DE PICOS (OBSTÁCULOS)
