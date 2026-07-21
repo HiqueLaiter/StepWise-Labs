@@ -1,0 +1,13 @@
+version: '3.8'
+
+services:
+  dashboard:
+    build: .
+    container_name: stepwise-dashboard
+    ports:
+      - "8501:8501"
+    volumes:
+      - .:/app  # espelha a pasta local direto no container
+    environment:
+      - TZ=America/Sao_Paulo
+    restart: always
