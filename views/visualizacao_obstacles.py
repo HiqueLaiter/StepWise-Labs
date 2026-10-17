@@ -527,7 +527,9 @@ def _modo_unilateral(limiares: dict):
 # MODOS DE COMPARAÇÃO (INÍCIO vs FINAL) — BILATERAL E UNILATERAL
 # =============================================================================
 
-def _modo_comparacao(limiares: dict, unilateral: bool):
+def _modo_comparacao(limiares: dict, unilateral: bool, limiares_final: dict = None):
+    # Se não houver limiar próprio para a sessão final, usa o mesmo do início.
+    limiares_final = limiares_final or limiares
     st.markdown("### 📁 Upload das Sessões")
     col1, col2 = st.columns(2)
     sufixo = "uni" if unilateral else "bi"
@@ -543,11 +545,19 @@ def _modo_comparacao(limiares: dict, unilateral: bool):
         return
 
     sess_i = _carregar_sessao(arq_inicio, limiares)
-    sess_f = _carregar_sessao(arq_final, limiares)
+    sess_f = _carregar_sessao(arq_final, limiares_final)
     if sess_i is None or sess_f is None:
         return
     df_i, fps_i, tempo_i, res_i = sess_i
     df_f, fps_f, tempo_f, res_f = sess_f
+
+    # Aviso: métricas dependentes de picos só são comparáveis com o mesmo limiar.
+    if limiares['joelho'] != limiares_final['joelho']:
+        st.warning(
+            f"⚠️ Limiares diferentes: Início = {limiares['joelho']:g}° e Final = "
+            f"{limiares_final['joelho']:g}°. Número de picos, amplitude dos picos, "
+            "Robinson, consistência e Jerk dependem do limiar, então a comparação "
+            "entre as sessões pode refletir a mudança do limiar, e não do paciente.")
 
     col1, col2 = st.columns(2)
     col1.success(f"✅ Início — {len(df_i)} frames | {len(df_i)/fps_i:.1f} s | {res_i['fonte']}")
@@ -612,9 +622,9 @@ def _modo_comparacao(limiares: dict, unilateral: bool):
         with aba:
             key = f"comp_{sufixo}_{rot.lower()}"
             if unilateral:
-                _secao_picos_unilateral(res, tempo, df, limiares, fps, lado, key, rot)
+                _secao_picos_unilateral(res, tempo, df, res['limiares'], fps, lado, key, rot)
             else:
-                _secao_picos_bilateral(res, tempo, df, limiares, fps, key, rot)
+                _secao_picos_bilateral(res, tempo, df, res['limiares'], fps, key, rot)
             st.markdown("---")
             _expander_ombros(df, tempo, res, key)
             st.markdown("---")
@@ -644,6 +654,16 @@ def carregar():
                         options=[MODO_UNICA_BI, MODO_UNICA_UNI, MODO_COMP_BI, MODO_COMP_UNI],
                         index=0)
 
+        # Na comparação, o limiar acima vale para a sessão de início; a final
+        # pode ter limiar próprio (ex.: paciente que evoluiu), com aviso na tela.
+        limiares_final = limiares
+        if modo in (MODO_COMP_BI, MODO_COMP_UNI):
+            if st.checkbox("Usar limiar diferente na sessão final", value=False):
+                limiar_final = st.number_input(
+                    "Limiar de **joelho** — sessão final (graus)",
+                    min_value=0.0, max_value=180.0, value=limiar_joelho, step=1.0)
+                limiares_final = {'joelho': limiar_final}
+
     aba_analise, aba_guia = st.tabs(["📊 Análise", "📖 Guia de métricas"])
 
     with aba_analise:
@@ -652,9 +672,9 @@ def carregar():
         elif modo == MODO_UNICA_UNI:
             _modo_unilateral(limiares)
         elif modo == MODO_COMP_BI:
-            _modo_comparacao(limiares, unilateral=False)
+            _modo_comparacao(limiares, unilateral=False, limiares_final=limiares_final)
         else:
-            _modo_comparacao(limiares, unilateral=True)
+            _modo_comparacao(limiares, unilateral=True, limiares_final=limiares_final)
 
     with aba_guia:
         _aba_metricas_info()
