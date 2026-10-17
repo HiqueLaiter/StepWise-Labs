@@ -735,10 +735,12 @@ def _bloco_lista_participantes():
 
 
 def _fig_base(titulo: str, eixo_y: str) -> go.Figure:
+    """Título à esquerda e legenda à direita (fora da área do gráfico): nunca se sobrepõem."""
     fig = go.Figure()
-    fig.update_layout(title=titulo, xaxis_title="Sessão", yaxis_title=eixo_y,
-                      hovermode="x unified", margin=dict(t=50, b=40),
-                      legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
+    fig.update_layout(title=dict(text=titulo, x=0, xanchor="left"),
+                      xaxis_title="Sessão", yaxis_title=eixo_y,
+                      hovermode="x unified", margin=dict(t=60, b=40),
+                      legend=dict(orientation="v", yanchor="top", y=1, xanchor="left", x=1.02))
     fig.update_xaxes(dtick=1)
     return fig
 
