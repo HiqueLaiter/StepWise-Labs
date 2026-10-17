@@ -19,6 +19,17 @@ from utils.processamento import (
     tabela_comparativa,
     relatorio_para_json,
     relatorio_para_excel,
+    ordenar_nomes_naturalmente,
+    linha_evolucao,
+    tabela_evolucao_longa,
+    tabela_evolucao_exibicao,
+    tabela_grupo_exibicao,
+    agregar_grupo,
+    series_da_metrica,
+    metricas_disponiveis,
+    rotulo_metrica,
+    construir_relatorio_evolucao,
+    evolucao_para_excel,
     COL_JOELHO_ESQ, COL_JOELHO_DIR,
     COL_OMBRO_ESQ,  COL_OMBRO_DIR,
     COL_TEMPO,
@@ -156,6 +167,21 @@ def _aba_metricas_info():
             Mostra a série temporal dos ombros durante o exercício. Elevação ou oscilação
             excessiva, ou diferença marcante entre os lados, pode indicar **compensação postural**
             para executar a flexão do joelho. Disponível quando o arquivo contém os dados dos ombros.
+            """
+        )
+
+    with st.expander("📈 Evolução entre sessões", expanded=False):
+        st.markdown(
+            """
+            Na aba **Evolução**, cada participante recebe todas as suas sessões (ordenadas pelo nome do
+            arquivo) e cada métrica vira um ponto por sessão. Há gráficos por participante e do grupo
+            (participantes + média, só participantes, média ± desvio padrão).
+
+            - O **limiar** é definido por participante; limiares diferentes mudam o número e a amplitude
+              dos picos, o Robinson, a consistência e o Jerk, e o app avisa quando isso ocorre.
+            - A média do grupo ignora quem não tem valor naquela sessão (por exemplo, sem picos).
+            - No **unilateral** aparece só o joelho escolhido e o Robinson não é calculado; os ombros
+              aparecem sempre nos dois lados.
             """
         )
 
@@ -632,6 +658,210 @@ def _modo_comparacao(limiares: dict, unilateral: bool, limiares_final: dict = No
 
 
 # =============================================================================
+# ABA DE EVOLUÇÃO (VÁRIAS SESSÕES DE UM PARTICIPANTE E GRUPO DE PARTICIPANTES)
+# =============================================================================
+
+CHAVE_EVOLUCAO = "evolucao_participantes"   # {nome: {'limiar': x, 'linhas': [...]}} no session_state
+COR_GRUPO = '#2B2D42'
+COR_LADO = {'Esquerdo': COR_ESQ, 'Direito': COR_DIR}
+PALETA_PARTICIPANTES = ['#3A86FF', '#FB5607', '#8338EC', '#06D6A0', '#FFBE0B',
+                        '#EF476F', '#118AB2', '#8D99AE', '#9C6644', '#2A9D8F']
+
+
+def _participantes() -> dict:
+    if CHAVE_EVOLUCAO not in st.session_state:
+        st.session_state[CHAVE_EVOLUCAO] = {}
+    return st.session_state[CHAVE_EVOLUCAO]
+
+
+def _remover_participante(nome: str):
+    _participantes().pop(nome, None)
+
+
+def _processar_sessoes(arquivos: list, limiar: float):
+    """Lê os arquivos na ordem natural do nome e devolve (linhas, erros)."""
+    por_nome = {a.name: a for a in arquivos}
+    linhas, erros = [], []
+    for ordem, nome in enumerate(ordenar_nomes_naturalmente(list(por_nome)), start=1):
+        sessao = _carregar_sessao(por_nome[nome], {'joelho': limiar})
+        if sessao is None:
+            erros.append(nome)
+            continue
+        linhas.append(linha_evolucao(sessao[3], ordem))
+    return linhas, erros
+
+
+def _bloco_adicionar_participante(limiar_padrao: float):
+    st.markdown("#### ➕ Adicionar participante")
+    st.caption("Envie todas as sessões do participante de uma vez. A ordem das sessões segue o "
+               "nome dos arquivos (por exemplo, a data no início do nome); confira a ordem na tabela abaixo.")
+    c1, c2 = st.columns([2, 1])
+    nome = c1.text_input("Nome ou código do participante", key="evo_nome")
+    limiar = c2.number_input("Limiar do joelho deste participante (°)", min_value=0.0, max_value=180.0,
+                             value=limiar_padrao, step=1.0, key="evo_limiar",
+                             help="Cada participante pode ter o seu limiar (definido pelo profissional).")
+    arquivos = st.file_uploader("Sessões do participante", type=["csv", "xlsx", "xlsm"],
+                                accept_multiple_files=True, key="evo_arquivos")
+    if st.button("Adicionar participante", key="evo_add"):
+        nome = (nome or "").strip()
+        if not nome:
+            st.error("Informe o nome ou código do participante.")
+        elif not arquivos:
+            st.error("Envie pelo menos um arquivo de sessão.")
+        else:
+            linhas, erros = _processar_sessoes(arquivos, limiar)
+            if linhas:
+                existia = nome in _participantes()
+                _participantes()[nome] = {'limiar': limiar, 'linhas': linhas}
+                st.success(f"{'Atualizado' if existia else 'Adicionado'}: {nome} — {len(linhas)} sessões.")
+            if erros:
+                st.warning("Arquivos ignorados por erro de leitura: " + ", ".join(erros))
+
+
+def _bloco_lista_participantes():
+    parts = _participantes()
+    if not parts:
+        st.info("Nenhum participante adicionado ainda.")
+        return
+    st.markdown("#### 👥 Participantes adicionados")
+    for nome, d in list(parts.items()):
+        c1, c2 = st.columns([4, 1])
+        c1.markdown(f"**{nome}** — {len(d['linhas'])} sessões — limiar {d['limiar']:g}°")
+        c2.button("Remover", key=f"evo_rm_{nome}", on_click=_remover_participante, args=(nome,))
+        with st.expander(f"Ordem das sessões de {nome}"):
+            ordem = pd.DataFrame({'Sessão': [l['sessao'] for l in d['linhas']],
+                                  'Arquivo': [l['arquivo'] for l in d['linhas']]}).set_index('Sessão')
+            _mostrar_tabela(ordem)
+
+
+def _fig_base(titulo: str, eixo_y: str) -> go.Figure:
+    fig = go.Figure()
+    fig.update_layout(title=titulo, xaxis_title="Sessão", yaxis_title=eixo_y,
+                      hovermode="x unified", margin=dict(t=50, b=40),
+                      legend=dict(orientation="h", yanchor="bottom", y=1.02, x=0))
+    fig.update_xaxes(dtick=1)
+    return fig
+
+
+def _fig_evolucao_participante(longa_p: pd.DataFrame, metrica: str, bilateral: bool, lado) -> go.Figure:
+    fig = _fig_base(rotulo_metrica(metrica), rotulo_metrica(metrica))
+    for coluna, rotulo, nome_lado in series_da_metrica(metrica, bilateral, lado):
+        cor = COR_LADO.get(nome_lado, COR_GRUPO)
+        fig.add_trace(go.Scatter(x=longa_p['sessao'], y=longa_p[coluna], mode='lines+markers',
+                                 name=nome_lado or "Participante", line=dict(color=cor, width=3),
+                                 marker=dict(size=8), connectgaps=False))
+    return fig
+
+
+def _secao_evolucao_participante(longa, bilateral, lado):
+    st.markdown("### 🧍 Evolução de um participante")
+    nome = st.selectbox("Participante", options=list(_participantes()), key="evo_sel_part")
+    d = longa[longa['participante'] == nome].sort_values('sessao')
+    opcoes = metricas_disponiveis(bilateral)
+    padrao = [m for m in ('amplitude_media_picos_graus', 'jerk_rms_graus_por_s3',
+                          'indice_simetria_robinson_pct') if m in opcoes]
+    escolhidas = st.multiselect("Métricas para mostrar", options=opcoes, default=padrao,
+                                format_func=rotulo_metrica, key="evo_metricas_part")
+    for m in escolhidas:
+        st.plotly_chart(_fig_evolucao_participante(d, m, bilateral, lado),
+                        use_container_width=True, key=f"evo_part_{m}")
+    st.markdown("##### Tabela da evolução (valores numéricos puros — copie para o Excel)")
+    tabela = tabela_evolucao_exibicao(longa, bilateral, lado, participante=nome)
+    _mostrar_tabela(tabela.drop(columns='Participante').set_index('Sessão'))
+
+
+def _fig_grupo(longa: pd.DataFrame, coluna: str, rotulo: str, estilo: str) -> go.Figure:
+    """estilo: 'linhas+media' | 'linhas' | 'media±dp'."""
+    fig = _fig_base(rotulo, rotulo)
+    g = agregar_grupo(longa, coluna)
+    if estilo in ('linhas+media', 'linhas'):
+        for i, (nome, d) in enumerate(longa.groupby('participante')):
+            d = d.sort_values('sessao')
+            fig.add_trace(go.Scatter(
+                x=d['sessao'], y=d[coluna], mode='lines+markers', name=str(nome),
+                line=dict(color=PALETA_PARTICIPANTES[i % len(PALETA_PARTICIPANTES)],
+                          width=1.5 if estilo == 'linhas+media' else 2.5),
+                opacity=0.6 if estilo == 'linhas+media' else 1.0, marker=dict(size=6)))
+    if estilo == 'media±dp':
+        ok = g.dropna(subset=['Desvio padrão'])
+        if len(ok):
+            x = list(ok['Sessão'])
+            alto = list(ok['Média'] + ok['Desvio padrão'])
+            baixo = list(ok['Média'] - ok['Desvio padrão'])
+            fig.add_trace(go.Scatter(x=x + x[::-1], y=alto + baixo[::-1], fill='toself',
+                                     fillcolor='rgba(43,45,66,0.18)', line=dict(width=0),
+                                     name='± 1 desvio padrão', hoverinfo='skip'))
+    if estilo in ('linhas+media', 'media±dp'):
+        fig.add_trace(go.Scatter(x=g['Sessão'], y=g['Média'], mode='lines+markers',
+                                 name='Média do grupo', line=dict(color=COR_GRUPO, width=4),
+                                 marker=dict(size=9)))
+    return fig
+
+
+def _secao_evolucao_grupo(longa, bilateral, lado):
+    st.markdown("### 👥 Evolução do grupo")
+    n = longa['participante'].nunique()
+    st.caption(f"{n} participante(s). A média e o desvio padrão são calculados por sessão, "
+               "ignorando os participantes sem valor naquela sessão.")
+    limiares = {d['limiar'] for d in _participantes().values()}
+    if len(limiares) > 1:
+        st.warning("⚠️ Os participantes têm limiares diferentes (" +
+                   ", ".join(f"{x:g}°" for x in sorted(limiares)) +
+                   "). Número de picos, amplitude dos picos, Robinson, consistência e Jerk dependem "
+                   "do limiar, então as comparações entre participantes devem levar isso em conta.")
+    opcoes = [(coluna, rotulo) for m in metricas_disponiveis(bilateral)
+              for coluna, rotulo, _ in series_da_metrica(m, bilateral, lado)]
+    rotulo_por_coluna = dict(opcoes)
+    coluna = st.selectbox("Métrica", options=[c for c, _ in opcoes],
+                          format_func=rotulo_por_coluna.get, key="evo_sel_grupo")
+    abas = st.tabs(["Participantes + média", "Só participantes", "Média ± desvio padrão"])
+    for aba, estilo, k in zip(abas, ("linhas+media", "linhas", "media±dp"), ("a", "b", "c")):
+        with aba:
+            st.plotly_chart(_fig_grupo(longa, coluna, rotulo_por_coluna[coluna], estilo),
+                            use_container_width=True, key=f"evo_grupo_{k}")
+    st.markdown("##### Média do grupo por sessão (valores numéricos puros)")
+    g = agregar_grupo(longa, coluna).set_index('Sessão')
+    _mostrar_tabela(g)
+
+
+def _bloco_exportacao_evolucao(modo: str, lado):
+    st.markdown("#### 💾 Exportar evolução")
+    st.caption("Todos os participantes e sessões, com todas as métricas, e a média/desvio do grupo por sessão.")
+    rel = construir_relatorio_evolucao(_participantes(), modo, lado)
+    c1, c2 = st.columns(2)
+    c1.download_button("⬇️ Baixar evolução (JSON)", data=relatorio_para_json(rel),
+                       file_name="stepwise_evolucao.json", mime="application/json", key="dl_json_evolucao")
+    c2.download_button("⬇️ Baixar evolução (Excel .xlsx)", data=evolucao_para_excel(rel),
+                       file_name="stepwise_evolucao.xlsx",
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                       key="dl_xlsx_evolucao")
+
+
+def _aba_evolucao(limiar_padrao: float):
+    st.markdown("Acompanhe a evolução ao longo das sessões de cada participante e do grupo.")
+    unilateral = st.radio("Tipo de análise:", options=["Bilateral", "Unilateral"],
+                          horizontal=True, key="evo_tipo") == "Unilateral"
+    lado = _seletor_lado("evo_lado") if unilateral else None
+    bilateral = not unilateral
+    modo = "Evolução — Unilateral" if unilateral else "Evolução — Bilateral"
+
+    st.markdown("---")
+    _bloco_adicionar_participante(limiar_padrao)
+    st.markdown("---")
+    _bloco_lista_participantes()
+    if not _participantes():
+        return
+
+    longa = tabela_evolucao_longa(_participantes())
+    st.markdown("---")
+    _secao_evolucao_participante(longa, bilateral, lado)
+    st.markdown("---")
+    _secao_evolucao_grupo(longa, bilateral, lado)
+    st.markdown("---")
+    _bloco_exportacao_evolucao(modo, lado)
+
+
+# =============================================================================
 # PONTO DE ENTRADA DA VIEW
 # =============================================================================
 
@@ -664,7 +894,7 @@ def carregar():
                     min_value=0.0, max_value=180.0, value=limiar_joelho, step=1.0)
                 limiares_final = {'joelho': limiar_final}
 
-    aba_analise, aba_guia = st.tabs(["📊 Análise", "📖 Guia de métricas"])
+    aba_analise, aba_evolucao, aba_guia = st.tabs(["📊 Análise", "📈 Evolução", "📖 Guia de métricas"])
 
     with aba_analise:
         if modo == MODO_UNICA_BI:
@@ -675,6 +905,9 @@ def carregar():
             _modo_comparacao(limiares, unilateral=False, limiares_final=limiares_final)
         else:
             _modo_comparacao(limiares, unilateral=True, limiares_final=limiares_final)
+
+    with aba_evolucao:
+        _aba_evolucao(limiar_joelho)
 
     with aba_guia:
         _aba_metricas_info()

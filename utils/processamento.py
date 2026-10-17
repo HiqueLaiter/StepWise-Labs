@@ -713,6 +713,11 @@ def relatorio_para_excel(relatorio: dict) -> bytes:
         abas['Ombros'] = _tabela_excel(relatorio['oscilacao_ombros'])
     abas['Picos_joelho'] = _tabela_excel(relatorio['picos_flexao_joelho'])
 
+    return _abas_para_excel(abas)
+
+
+def _abas_para_excel(abas: dict) -> bytes:
+    """Grava {nome_da_aba: DataFrame} num .xlsx (cabeçalho em negrito, painel congelado, larguras)."""
     from openpyxl.styles import Font
     buffer = io.BytesIO()
     with pd.ExcelWriter(buffer, engine='openpyxl') as writer:
@@ -726,3 +731,178 @@ def relatorio_para_excel(relatorio: dict) -> bytes:
                 largura = max(len(str(c.value)) if c.value is not None else 0 for c in coluna)
                 ws.column_dimensions[coluna[0].column_letter].width = min(largura + 2, 70)
     return buffer.getvalue()
+
+
+# =============================================================================
+# 8. EVOLUÇÃO ENTRE SESSÕES (UM PARTICIPANTE E GRUPO)
+# =============================================================================
+# Cada sessão vira UMA linha de números (linha_evolucao). Os gráficos, as tabelas
+# e os arquivos exportados saem das mesmas linhas, como nas outras seções.
+
+SEP_LADO = '__'   # 'coluna__Esquerdo' / 'coluna__Direito'
+
+# (id da métrica, rótulo com unidade, escopo)
+#   'lado'   -> uma série por joelho (as duas no bilateral; só a escolhida no unilateral)
+#   'ombro'  -> uma série por ombro (sempre as duas: é a postura do corpo todo)
+#   'global' -> uma série só (Robinson compara os dois joelhos: só existe no bilateral)
+METRICAS_EVOLUCAO = [
+    ('amplitude_media_picos_graus',  'Amplitude média dos picos (°)',           'lado'),
+    ('amplitude_maxima_graus',       'Amplitude máxima (°)',                    'lado'),
+    ('amplitude_media_graus',        'Amplitude média da sessão (°)',           'lado'),
+    ('indice_simetria_robinson_pct', 'Índice de Simetria de Robinson (%)',      'global'),
+    ('jerk_rms_graus_por_s3',        'Jerk RMS (°/s³)',                         'lado'),
+    ('cv_duracao_pct',               'CV da duração (%)',                       'lado'),
+    ('n_picos',                      'Nº de picos',                             'lado'),
+    ('duracao_media_picos_s',        'Duração média dos picos (s)',             'lado'),
+    ('ombro_pico_a_pico_graus',      'Oscilação do ombro — pico a pico (°)',    'ombro'),
+    ('ombro_desvio_padrao_graus',    'Oscilação do ombro — desvio padrão (°)',  'ombro'),
+    ('duracao_total_s',              'Duração total da sessão (s)',             'global'),
+]
+_ROTULO_EVO = {m: r for m, r, _ in METRICAS_EVOLUCAO}
+_ESCOPO_EVO = {m: e for m, _, e in METRICAS_EVOLUCAO}
+_METRICAS_JOELHO = [m for m, _, e in METRICAS_EVOLUCAO if e == 'lado']
+_NOMES_OMBRO = (('ombro_esq', 'Esquerdo'), ('ombro_dir', 'Direito'))
+
+
+def ordenar_nomes_naturalmente(nomes: list) -> list:
+    """Ordem 'natural' (sessao2 antes de sessao10; datas no nome ficam em ordem cronológica)."""
+    import re
+    def chave(n):
+        return [int(t) if t.isdigit() else t.lower() for t in re.split(r'(\d+)', str(n))]
+    return sorted(nomes, key=chave)
+
+
+def linha_evolucao(resumo: dict, ordem: int) -> dict:
+    """Linha numérica de uma sessão (todas as métricas dos dois joelhos, Robinson e ombros)."""
+    linha = {
+        'sessao': int(ordem),
+        'arquivo': resumo.get('arquivo', ''),
+        'limiar_joelho_graus': resumo['limiares'].get('joelho'),
+        'duracao_total_s': _val(resumo['tempo_execucao_seg']),
+        'indice_simetria_robinson_pct': _val(resumo['simetria']['si_pct']),
+    }
+    for k, nome in _NOME_LADO.items():
+        m = _metricas_do_lado(resumo, k, 2)
+        for ch in _METRICAS_JOELHO:
+            linha[f'{ch}{SEP_LADO}{nome}'] = m[ch]
+    for k, nome in _NOMES_OMBRO:
+        o = (resumo.get('ombro') or {}).get(k)
+        for ch in ('pico_a_pico_graus', 'desvio_padrao_graus'):
+            linha[f'ombro_{ch}{SEP_LADO}{nome}'] = _val(o[ch.replace('_graus', '')]) if o else float('nan')
+    return linha
+
+
+def tabela_evolucao_longa(participantes: dict) -> pd.DataFrame:
+    """
+    {nome: {'limiar': x, 'linhas': [linha_evolucao, ...]}} -> DataFrame com uma linha por
+    (participante, sessão) e colunas numéricas brutas (chaves de linha_evolucao).
+    """
+    registros = []
+    for nome, dados in participantes.items():
+        for linha in dados['linhas']:
+            registros.append({'participante': nome, **linha})
+    df = pd.DataFrame(registros)
+    return df.sort_values(['participante', 'sessao']).reset_index(drop=True) if not df.empty else df
+
+
+def series_da_metrica(metrica: str, bilateral: bool = True, lado: str | None = None) -> list:
+    """
+    Séries (coluna, rótulo) que representam a métrica no gráfico.
+    Devolve [] quando a métrica não se aplica (Robinson no unilateral).
+    """
+    rotulo, escopo = _ROTULO_EVO[metrica], _ESCOPO_EVO[metrica]
+    if escopo == 'global':
+        if metrica == 'indice_simetria_robinson_pct' and not bilateral:
+            return []
+        return [(metrica, rotulo, None)]
+    if escopo == 'lado' and not bilateral:
+        lados = [lado or 'Esquerdo']
+    else:
+        lados = ['Esquerdo', 'Direito']
+    return [(f'{metrica}{SEP_LADO}{n}', f'{rotulo} — {n}', n) for n in lados]
+
+
+def metricas_disponiveis(bilateral: bool = True) -> list:
+    """Ids das métricas que fazem sentido no modo (Robinson só no bilateral)."""
+    return [m for m, _, _ in METRICAS_EVOLUCAO if bilateral or m != 'indice_simetria_robinson_pct']
+
+
+def rotulo_metrica(metrica: str) -> str:
+    return _ROTULO_EVO[metrica]
+
+
+def agregar_grupo(longa: pd.DataFrame, coluna: str) -> pd.DataFrame:
+    """Média, desvio padrão amostral e nº de participantes por sessão (ignora valores indefinidos)."""
+    if longa.empty or coluna not in longa:
+        return pd.DataFrame(columns=['Sessão', 'Média', 'Desvio padrão', 'Nº de participantes'])
+    g = longa.groupby('sessao')[coluna].agg(['mean', 'std', 'count']).reset_index()
+    g.columns = ['Sessão', 'Média', 'Desvio padrão', 'Nº de participantes']
+    g['Média'] = g['Média'].round(2)
+    g['Desvio padrão'] = g['Desvio padrão'].round(2)
+    return g
+
+
+def tabela_evolucao_exibicao(longa: pd.DataFrame, bilateral: bool = True, lado: str | None = None,
+                             participante: str | None = None) -> pd.DataFrame:
+    """Tabela legível (só números, unidade no cabeçalho): uma linha por participante × sessão."""
+    if longa.empty:
+        return pd.DataFrame()
+    d = longa if participante is None else longa[longa['participante'] == participante]
+    saida = pd.DataFrame({'Participante': d['participante'], 'Sessão': d['sessao'],
+                          'Limiar do joelho (°)': d['limiar_joelho_graus']})
+    for m in metricas_disponiveis(bilateral):
+        for coluna, rotulo, _ in series_da_metrica(m, bilateral, lado):
+            saida[rotulo] = d[coluna]
+    return saida.reset_index(drop=True)
+
+
+def tabela_grupo_exibicao(longa: pd.DataFrame, bilateral: bool = True, lado: str | None = None) -> pd.DataFrame:
+    """Média/desvio/n do grupo por sessão, para todas as séries (formato longo, numérico)."""
+    partes = []
+    for m in metricas_disponiveis(bilateral):
+        for coluna, rotulo, _ in series_da_metrica(m, bilateral, lado):
+            g = agregar_grupo(longa, coluna)
+            g.insert(0, 'Métrica', rotulo)
+            partes.append(g)
+    return pd.concat(partes, ignore_index=True) if partes else pd.DataFrame()
+
+
+def _meta_evolucao(participantes: dict, modo: str, lado: str | None) -> dict:
+    return {
+        'modo_analise': modo,
+        'lado_analisado': lado if lado else 'Ambos',
+        'n_participantes': len(participantes),
+        'sessoes_por_participante': {n: len(d['linhas']) for n, d in participantes.items()},
+        'limiar_joelho_graus_por_participante': {n: d.get('limiar') for n, d in participantes.items()},
+        'gerado_em': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
+        'jerk_pre_processamento': (f"Butterworth passa-baixa {CORTE_PASSA_BAIXA_HZ:g} Hz "
+                                   f"(ordem {ORDEM_BUTTERWORTH}) + reamostragem a {FPS_ALVO:g} Hz; "
+                                   "janelas de movimento ativo apenas"),
+    }
+
+
+def construir_relatorio_evolucao(participantes: dict, modo: str, lado: str | None = None) -> dict:
+    """Relatório de evolução: metadados, tabela por participante × sessão e média/desvio do grupo."""
+    bilateral = lado is None
+    longa = tabela_evolucao_longa(participantes)
+    evo = tabela_evolucao_exibicao(longa, bilateral, lado)
+    grupo = tabela_grupo_exibicao(longa, bilateral, lado)
+    return _limpar({
+        'tipo': 'evolucao',
+        'metadados': _meta_evolucao(participantes, modo, lado),
+        'evolucao_por_participante': evo.to_dict(orient='records'),
+        'media_do_grupo_por_sessao': grupo.to_dict(orient='records'),
+    })
+
+
+def evolucao_para_excel(relatorio: dict) -> bytes:
+    """Excel da evolução: Metadados | Evolucao | Media_do_grupo (só números nas células)."""
+    meta = relatorio['metadados']
+    simples = {c: (json.dumps(v, ensure_ascii=False) if isinstance(v, (dict, list)) else v)
+               for c, v in meta.items()}
+    abas = {
+        'Metadados': pd.DataFrame({'Campo': list(simples), 'Valor': list(simples.values())}),
+        'Evolucao': pd.DataFrame(relatorio['evolucao_por_participante']),
+        'Media_do_grupo': pd.DataFrame(relatorio['media_do_grupo_por_sessao']),
+    }
+    return _abas_para_excel(abas)
