@@ -3,3 +3,9 @@ venv/
 __pycache__/
 *.pyc
 Pacientes - KinesiOS/
+
+# Dados de pacientes e relatórios exportados (nunca versionar)
+dados/
+exemplos/
+stepwise_sessao.*
+stepwise_comparacao.*
