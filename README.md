@@ -9,7 +9,7 @@ O sistema traduz dados brutos (capturados por visão computacional via KinesiOS 
 ## 🛠️ Pré-requisitos
 
 Antes de começar, certifique-se de que você tem instalado no seu computador:
-1. **Python** (versão 3.8 ou superior).
+1. **Python** (versões **3.10 a 3.13**; recomendado 3.12).
    * **Como verificar:** Abra o terminal (ou Prompt de Comando) e digite o seguinte comando e aperte Enter:
      ```bash
      python --version
@@ -109,10 +109,18 @@ Uma nova aba será aberta automaticamente no seu navegador de internet com o das
 
 ## 📋 Como usar o Dashboard
 
-1. **Configuração Clínica:** Na barra lateral esquerda, defina os limiares clínicos de flexão (em graus) esperados para o quadril e o joelho do paciente.
-2. **Modo de Análise:** Escolha se deseja analisar uma sessão única (bilateral ou unilateral) ou fazer uma **Comparação** (Sessão Inicial vs. Sessão Final).
+1. **Configuração Clínica:** Na barra lateral esquerda, defina o limiar clínico de flexão do joelho (em graus) esperado para o paciente.
+2. **Modo de Análise:** Escolha se deseja analisar uma sessão única (bilateral ou unilateral) ou fazer uma **Comparação** (Sessão Inicial vs. Sessão Final), também bilateral ou unilateral.
 3. **Upload dos Dados:** Arraste e solte o arquivo da sessão (formatos `.CSV`, `.XLSX` ou `.XLSM`). O sistema detecta automaticamente se os dados vieram do KinesiOS ou do Brainn_XR.
-4. **Análise de Resultados:** Navegue pelos gráficos gerados automaticamente e consulte a aba **📖 Guia de métricas** para entender como interpretar a Amplitude de Movimento e a Consistência Temporal.
+4. **Análise de Resultados:** Navegue pelos gráficos gerados automaticamente e consulte a aba **📖 Guia de métricas** para entender cada métrica: Amplitude de Movimento, Índice de Simetria de Robinson, Jerk RMS (suavidade), Consistência Temporal e Compensação dos Ombros.
+5. **Exportação:** em cada sessão há botões para baixar um relatório em **JSON** ou **Excel (.xlsx)** com metadados, métricas por lado, oscilação dos ombros e cada pico de flexão. Na comparação há também a exportação da tabela Início × Final com a variação.
+
+---
+
+## 🛠️ Problemas comuns (Windows)
+
+* **`DLL load failed ... Controle de Aplicativo bloqueou este arquivo`:** o Windows (Smart App Control ou política da organização) bloqueou um arquivo compilado de alguma biblioteca. O dashboard já evita `scipy` e `pyarrow`, mas outros pacotes podem ser bloqueados. Tente o Python 3.12 em um ambiente virtual novo, rode em outro computador ou peça liberação ao setor de TI.
+* **Erro ao compilar `numpy` no `pip install`:** o Python é novo demais para as versões fixadas. Use o Python 3.12.
 
 ---
 
