@@ -6,10 +6,10 @@ from views import visualizacao_obstacles
 # CONFIGURAÇÃO DA PÁGINA
 # =============================================================================
 # Carrega o ícone da aba do navegador
-icon = Image.open("assets/icon SW.png")
+icon = Image.open("assets/icone_omnifisio.png")
 
 st.set_page_config(
-    page_title="StepWise Analytics",
+    page_title="OmniFisio",
     page_icon=icon,
     layout="wide",
     initial_sidebar_state="expanded",
@@ -18,7 +18,17 @@ st.set_page_config(
 # =============================================================================
 # CABEÇALHO
 # =============================================================================
-st.image("assets/SW w png.png", width=300)
+def _logo_do_tema() -> str:
+    """Logo para o tema ativo (claro ou escuro). Se o tema não puder ser detectado, usa a escura."""
+    try:
+        tipo = st.context.theme.type
+    except Exception:
+        tipo = None
+    return ("assets/omnifisio_logo_claro.png" if tipo == "light"
+            else "assets/omnifisio_logo_escuro.png")
+
+
+st.image(_logo_do_tema(), width=300)
 
 # =============================================================================
 # NAVEGAÇÃO POR ABAS
@@ -53,7 +63,7 @@ with abas[0]:
 
         | Aba | Descrição |
         |---|---|
-        | 🦵 Membros Inferiores | Análise da marcha estacionária: flexão de joelho, simetria, suavidade e compensação dos ombros |
+        | 🦵 Membros Inferiores | Análise da marcha estacionária: flexão de joelho (amplitude e picos), evolução entre sessões e compensação dos ombros |
 
         ---
 

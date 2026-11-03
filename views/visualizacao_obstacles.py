@@ -17,7 +17,7 @@ from utils.processamento import (
     tabela_resumo_lados,
     tabela_ombros,
     tabela_comparativa,
-    relatorio_para_json,
+    relatorio_para_csv,
     relatorio_para_excel,
     ordenar_nomes_naturalmente,
     linha_evolucao,
@@ -69,9 +69,9 @@ def _aba_metricas_info():
             julgamento em **dados mensuráveis e reproduzíveis**, facilitando o acompanhamento da
             evolução e a comunicação entre a equipe de saúde.
 
-            O foco analítico é a **flexão do joelho**. O dashboard calcula amplitude de movimento,
-            simetria bilateral, suavidade motora (Jerk) e consistência temporal, além de exibir a
-            oscilação dos ombros como indicador de compensação postural.
+            O foco analítico é a **flexão do joelho**. O dashboard calcula a amplitude de movimento
+            e a quantidade de repetições (picos de flexão), além de exibir a oscilação dos ombros
+            como indicador de compensação postural.
             """
         )
 
@@ -96,51 +96,16 @@ def _aba_metricas_info():
 
             **Por que importa:** indicador rápido de capacidade articular, mesmo quando poucos
             picos são detectados.
-            """
-        )
 
-    with st.expander("⚖️ Índice de Simetria de Robinson (SI)", expanded=False):
-        st.markdown(
-            """
-            **O que é:** compara a amplitude média dos picos de flexão do joelho dos dois lados:
+            Para cada lado, o painel também mostra o **número de picos** e a **amplitude média dos
+            picos** (média dos ângulos máximos de cada repetição), que foca o movimento em si e
+            não é diluída pelos momentos de repouso.
 
-            $$SI = \\frac{2 \\cdot |X_{dir} - X_{esq}|}{X_{dir} + X_{esq}} \\times 100\\%$$
-
-            onde $X$ é a amplitude média dos picos de flexão do joelho.
-
-            **Como interpretar:** **0% = simetria perfeita**; quanto maior o valor, maior a
-            assimetria entre os membros. A fórmula é simétrica por construção, portanto **não
-            indica qual lado** é menos ativo — consulte as amplitudes de cada lado para isso.
-            Não é calculado se algum lado não tiver picos detectados.
-            """
-        )
-
-    with st.expander("〰️ Suavidade motora — Jerk RMS", expanded=False):
-        st.markdown(
-            """
-            **O que é:** raiz da média dos quadrados da **terceira derivada** do ângulo do joelho
-            em relação ao tempo (graus/s³). Valores **menores** indicam movimento mais suave.
-
-            **Cuidados metodológicos aplicados:**
-            - A terceira derivada amplifica ruído, então o cálculo ocorre **apenas após** filtro
-              passa-baixa antirruído e **normalização temporal** (reamostragem para taxa comum,
-              tornando comparáveis KinesiOS e Brainn_XR);
-            - O RMS considera **somente as janelas dos picos de movimento ativo**, ignorando os
-              repousos entre repetições, que diluiriam a medida.
-            """
-        )
-
-    with st.expander("🕐 Consistência temporal", expanded=False):
-        st.markdown(
-            """
-            **O que é:** o **Coeficiente de Variação (CV%)** das durações dos picos
-            (desvio padrão ÷ média × 100).
-
-            | CV% | Interpretação |
-            |---|---|
-            | < 15% | Ritmo muito consistente — boa regularidade motora |
-            | 15% a 30% | Variabilidade moderada — aceitável em reabilitação |
-            | > 30% | **Alta irregularidade** — pode indicar fadiga, dor ou déficit de controle motor |
+            **Gráficos com escala fixa:** abaixo de cada gráfico do joelho e do ombro há um
+            segundo gráfico com o eixo vertical fixo na amplitude normal de flexão
+            (**joelho 0–140°** e **ombro 0–180°**, conforme o Manual de Goniometria). O primeiro
+            gráfico ajusta a escala aos dados (melhor para ver detalhes); o segundo mostra o
+            movimento em relação ao arco articular completo.
             """
         )
 
@@ -178,10 +143,9 @@ def _aba_metricas_info():
             (participantes + média, só participantes, média ± desvio padrão).
 
             - O **limiar** é definido por participante; limiares diferentes mudam o número e a amplitude
-              dos picos, o Robinson, a consistência e o Jerk, e o app avisa quando isso ocorre.
+              dos picos, e o app avisa quando isso ocorre.
             - A média do grupo ignora quem não tem valor naquela sessão (por exemplo, sem picos).
-            - No **unilateral** aparece só o joelho escolhido e o Robinson não é calculado; os ombros
-              aparecem sempre nos dois lados.
+            - No **unilateral** aparece só o joelho escolhido; os ombros aparecem sempre nos dois lados.
             """
         )
 
@@ -207,6 +171,27 @@ def _num(x, casas: int = 1) -> str:
 # =============================================================================
 # GRÁFICOS
 # =============================================================================
+
+# Amplitudes articulares normais de flexão (graus) — Manual de Goniometria
+# (Marques, 2003), "Tabelas dos ângulos articulares": Ombro/Flexão 0-180° (p. 5),
+# Joelho/Flexão 0-140° (p. 6). Usadas como limite fixo do eixo Y nos gráficos de escala fixa.
+LIMITE_FIXO_OMBRO = 180
+LIMITE_FIXO_JOELHO = 140
+FONTE_GONIOMETRIA = "Manual de Goniometria (Marques, 2003)"
+
+
+def _legenda_escala_fixa(articulacao: str, limite: int) -> str:
+    return (f"Escala fixa 0–{limite}° (amplitude normal de flexão do {articulacao}, "
+            f"{FONTE_GONIOMETRIA}). Permite comparar visualmente o movimento com o "
+            "arco articular completo.")
+
+
+def _fixar_eixo_y(fig: go.Figure, limite: int, titulo: str) -> go.Figure:
+    """Fixa o eixo Y em 0..limite (todos os subplots) e acrescenta a escala ao título."""
+    fig.update_yaxes(range=[0, limite])
+    fig.update_layout(title=f"{titulo} — escala fixa 0–{limite}°")
+    return fig
+
 
 def _adicionar_picos(fig, tempo, picos, cor, **pos):
     for p in picos:
@@ -366,27 +351,14 @@ def _secao_metricas(resumo: dict, chaves: list[str], label: str = ""):
         col.metric(f"Joelho {NOME_LADO[k]} — Máx. (°)", _num(resumo['amplitude'][k]['maxima']))
         col.metric(f"Joelho {NOME_LADO[k]} — Média (°)", _num(resumo['amplitude'][k]['media']))
 
-    if len(chaves) == 2:
-        st.markdown("**Simetria e Suavidade**")
-        c1, c2, c3 = st.columns(3)
-        c1.metric("Índice de Simetria de Robinson (%)", _num(resumo['simetria']['si_pct']),
-                  help="0 = simetria perfeita. Calculado sobre a amplitude média dos picos de flexão.")
-        c2.metric("Jerk RMS Joelho Esq. (°/s³)", _num(resumo['jerk']['joelho_esq']['rms'], 0),
-                  help="Calculado após filtragem e normalização temporal, apenas nos picos.")
-        c3.metric("Jerk RMS Joelho Dir. (°/s³)", _num(resumo['jerk']['joelho_dir']['rms'], 0))
-    else:
-        st.markdown("**Suavidade**")
-        k = chaves[0]
-        st.metric(f"Jerk RMS Joelho {NOME_LADO[k]} (°/s³)", _num(resumo['jerk'][k]['rms'], 0),
-                  help="Calculado após filtragem e normalização temporal, apenas nos picos.")
-
-    st.markdown("**Consistência Temporal** *(CV% das durações — quanto menor, mais regular)*")
+    st.markdown("**Picos de Flexão** *(acima do limiar definido)*")
     cols = st.columns(len(chaves))
     for col, k in zip(cols, chaves):
-        cons = resumo['consistencia'][k]
-        col.metric(f"Joelho {NOME_LADO[k]} — CV (%)", _num(cons['cv_duracao']),
-                   help=(f"{cons['n_picos']} picos detectados\n"
-                         f"Média: {cons['media_duracao']:.2f} s ± {cons['desvio_duracao']:.2f} s"))
+        picos = resumo['picos'][k]
+        col.metric(f"Joelho {NOME_LADO[k]} — Nº de picos", str(len(picos)))
+        media_picos = float(np.mean([p['amplitude_maxima'] for p in picos])) if picos else float('nan')
+        col.metric(f"Joelho {NOME_LADO[k]} — Amplitude média dos picos (°)", _num(media_picos),
+                   help="Média dos ângulos máximos de cada pico de flexão.")
 
     st.markdown("**Resumo por lado** *(valores numéricos puros — selecione e copie para o Excel)*")
     _tabela_resumo_lados(resumo, chaves)
@@ -401,20 +373,25 @@ def _expander_ombros(df, tempo, resumo, key: str):
         st.caption("Elevação ou oscilação excessiva ao longo do exercício pode indicar "
                    "compensação postural.")
         st.plotly_chart(_plot_ombros(tempo, df), use_container_width=True, key=f"ombros_{key}")
+        st.plotly_chart(_fixar_eixo_y(_plot_ombros(tempo, df), LIMITE_FIXO_OMBRO,
+                                    "Oscilação dos ombros ao longo da sessão"),
+                        use_container_width=True, key=f"ombros_fixo_{key}")
+        st.caption(_legenda_escala_fixa("ombro", LIMITE_FIXO_OMBRO))
         _mostrar_tabela(tabela_ombros(resumo))
 
 
 def _bloco_exportacao(resumo: dict, modo: str, lado: str | None, key: str):
-    """Botões de download do relatório estruturado (JSON e Excel)."""
+    """Botões de download do relatório (CSV resumido e Excel completo)."""
     st.markdown("#### 💾 Exportar dados da sessão")
-    st.caption("Metadados, métricas por lado e valor/tempo de cada pico de flexão do joelho.")
+    st.caption("CSV: resumo por lado. Excel: metadados, métricas por lado, ombros e valor/tempo de cada "
+               "pico de flexão do joelho.")
     rel = construir_relatorio(resumo, modo, lado)
     c1, c2 = st.columns(2)
-    c1.download_button("⬇️ Baixar JSON", data=relatorio_para_json(rel),
-                       file_name="stepwise_sessao.json", mime="application/json",
-                       key=f"dl_json_{key}")
+    c1.download_button("⬇️ Baixar resumo (CSV)", data=relatorio_para_csv(rel),
+                       file_name="omnifisio_sessao.csv", mime="text/csv",
+                       key=f"dl_csv_{key}")
     c2.download_button("⬇️ Baixar Excel (.xlsx)", data=relatorio_para_excel(rel),
-                       file_name="stepwise_sessao.xlsx",
+                       file_name="omnifisio_sessao.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        key=f"dl_xlsx_{key}")
 
@@ -422,14 +399,15 @@ def _bloco_exportacao(resumo: dict, modo: str, lado: str | None, key: str):
 def _bloco_exportacao_comparacao(res_i: dict, res_f: dict, modo: str, lado: str | None, key: str):
     """Download da comparação Início × Final (tabela comparativa + métricas, ombros e picos das duas sessões)."""
     st.markdown("#### 💾 Exportar comparação")
-    st.caption("Tabela comparativa com a variação, metadados e, por sessão, métricas, ombros e picos.")
+    st.caption("CSV: tabela comparativa com a variação. Excel: também metadados e, por sessão, "
+               "métricas, ombros e picos.")
     rel = construir_relatorio_comparacao(res_i, res_f, modo, lado)
     c1, c2 = st.columns(2)
-    c1.download_button("⬇️ Baixar comparação (JSON)", data=relatorio_para_json(rel),
-                       file_name="stepwise_comparacao.json", mime="application/json",
-                       key=f"dl_json_{key}")
+    c1.download_button("⬇️ Baixar comparação (CSV)", data=relatorio_para_csv(rel),
+                       file_name="omnifisio_comparacao.csv", mime="text/csv",
+                       key=f"dl_csv_{key}")
     c2.download_button("⬇️ Baixar comparação (Excel .xlsx)", data=relatorio_para_excel(rel),
-                       file_name="stepwise_comparacao.xlsx",
+                       file_name="omnifisio_comparacao.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        key=f"dl_xlsx_{key}")
 
@@ -442,6 +420,13 @@ def _secao_picos_bilateral(resumo, tempo, df, limiares, fps, key: str, label: st
         resumo['picos']['joelho_esq'], resumo['picos']['joelho_dir'],
         limiares['joelho'], "Amplitude de Flexão do Joelho",
     ), use_container_width=True, key=f"grafico_joelho_{key}")
+    st.plotly_chart(_fixar_eixo_y(_plot_sinal_com_picos(
+        tempo, df[COL_JOELHO_ESQ], df[COL_JOELHO_DIR],
+        resumo['picos']['joelho_esq'], resumo['picos']['joelho_dir'],
+        limiares['joelho'], "Amplitude de Flexão do Joelho",
+    ), LIMITE_FIXO_JOELHO, "Amplitude de Flexão do Joelho"),
+        use_container_width=True, key=f"grafico_joelho_fixo_{key}")
+    st.caption(_legenda_escala_fixa("joelho", LIMITE_FIXO_JOELHO))
 
     c1, c2 = st.columns(2)
     with c1:
@@ -462,6 +447,12 @@ def _secao_picos_unilateral(resumo, tempo, df, limiares, fps, lado, key: str, la
         tempo, df[col], resumo['picos'][chave], limiares['joelho'],
         f"Flexão do Joelho — {lado}", cor, lado,
     ), use_container_width=True, key=f"grafico_joelho_{key}")
+    st.plotly_chart(_fixar_eixo_y(_plot_sinal_unilateral(
+        tempo, df[col], resumo['picos'][chave], limiares['joelho'],
+        f"Flexão do Joelho — {lado}", cor, lado,
+    ), LIMITE_FIXO_JOELHO, f"Flexão do Joelho — {lado}"),
+        use_container_width=True, key=f"grafico_joelho_fixo_{key}")
+    st.caption(_legenda_escala_fixa("joelho", LIMITE_FIXO_JOELHO))
     _tabela_picos(resumo['picos'][chave], fps)
 
 
@@ -581,9 +572,9 @@ def _modo_comparacao(limiares: dict, unilateral: bool, limiares_final: dict = No
     if limiares['joelho'] != limiares_final['joelho']:
         st.warning(
             f"⚠️ Limiares diferentes: Início = {limiares['joelho']:g}° e Final = "
-            f"{limiares_final['joelho']:g}°. Número de picos, amplitude dos picos, "
-            "Robinson, consistência e Jerk dependem do limiar, então a comparação "
-            "entre as sessões pode refletir a mudança do limiar, e não do paciente.")
+            f"{limiares_final['joelho']:g}°. O número de picos e a amplitude dos picos "
+            "dependem do limiar, então a comparação entre as sessões pode refletir "
+            "a mudança do limiar, e não do paciente.")
 
     col1, col2 = st.columns(2)
     col1.success(f"✅ Início — {len(df_i)} frames | {len(df_i)/fps_i:.1f} s | {res_i['fonte']}")
@@ -760,8 +751,8 @@ def _secao_evolucao_participante(longa, bilateral, lado):
     nome = st.selectbox("Participante", options=list(_participantes()), key="evo_sel_part")
     d = longa[longa['participante'] == nome].sort_values('sessao')
     opcoes = metricas_disponiveis(bilateral)
-    padrao = [m for m in ('amplitude_media_picos_graus', 'jerk_rms_graus_por_s3',
-                          'indice_simetria_robinson_pct') if m in opcoes]
+    padrao = [m for m in ('amplitude_media_picos_graus', 'n_picos',
+                          'ombro_pico_a_pico_graus') if m in opcoes]
     escolhidas = st.multiselect("Métricas para mostrar", options=opcoes, default=padrao,
                                 format_func=rotulo_metrica, key="evo_metricas_part")
     for m in escolhidas:
@@ -809,8 +800,8 @@ def _secao_evolucao_grupo(longa, bilateral, lado):
     if len(limiares) > 1:
         st.warning("⚠️ Os participantes têm limiares diferentes (" +
                    ", ".join(f"{x:g}°" for x in sorted(limiares)) +
-                   "). Número de picos, amplitude dos picos, Robinson, consistência e Jerk dependem "
-                   "do limiar, então as comparações entre participantes devem levar isso em conta.")
+                   "). O número de picos e a amplitude dos picos dependem do limiar, "
+                   "então as comparações entre participantes devem levar isso em conta.")
     opcoes = [(coluna, rotulo) for m in metricas_disponiveis(bilateral)
               for coluna, rotulo, _ in series_da_metrica(m, bilateral, lado)]
     rotulo_por_coluna = dict(opcoes)
@@ -828,13 +819,14 @@ def _secao_evolucao_grupo(longa, bilateral, lado):
 
 def _bloco_exportacao_evolucao(modo: str, lado):
     st.markdown("#### 💾 Exportar evolução")
-    st.caption("Todos os participantes e sessões, com todas as métricas, e a média/desvio do grupo por sessão.")
+    st.caption("CSV: todos os participantes e sessões, com todas as métricas. Excel: o mesmo, mais a "
+               "média e o desvio do grupo por sessão.")
     rel = construir_relatorio_evolucao(_participantes(), modo, lado)
     c1, c2 = st.columns(2)
-    c1.download_button("⬇️ Baixar evolução (JSON)", data=relatorio_para_json(rel),
-                       file_name="stepwise_evolucao.json", mime="application/json", key="dl_json_evolucao")
+    c1.download_button("⬇️ Baixar evolução (CSV)", data=relatorio_para_csv(rel),
+                       file_name="omnifisio_evolucao.csv", mime="text/csv", key="dl_csv_evolucao")
     c2.download_button("⬇️ Baixar evolução (Excel .xlsx)", data=evolucao_para_excel(rel),
-                       file_name="stepwise_evolucao.xlsx",
+                       file_name="omnifisio_evolucao.xlsx",
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                        key="dl_xlsx_evolucao")
 

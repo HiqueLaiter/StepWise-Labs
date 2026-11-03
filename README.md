@@ -1,6 +1,6 @@
-# 🦵 StepWise Analytics
+# 🦵 OmniFisio
 
-Bem-vindo ao **StepWise Analytics**! Este dashboard foi desenvolvido para auxiliar profissionais da saúde na visualização e análise de dados cinemáticos de reabilitação.
+Bem-vindo ao **OmniFisio**! Este dashboard foi desenvolvido para auxiliar profissionais da saúde na visualização e análise de dados cinemáticos de reabilitação.
 
 O sistema traduz dados brutos (capturados por visão computacional via KinesiOS ou Brainn_XR) em indicadores objetivos do **progresso terapêutico**, facilitando a tomada de decisão clínica.
 
@@ -112,8 +112,8 @@ Uma nova aba será aberta automaticamente no seu navegador de internet com o das
 1. **Configuração Clínica:** Na barra lateral esquerda, defina o limiar clínico de flexão do joelho (em graus) esperado para o paciente.
 2. **Modo de Análise:** Escolha se deseja analisar uma sessão única (bilateral ou unilateral) ou fazer uma **Comparação** (Sessão Inicial vs. Sessão Final), também bilateral ou unilateral.
 3. **Upload dos Dados:** Arraste e solte o arquivo da sessão (formatos `.CSV`, `.XLSX` ou `.XLSM`). O sistema detecta automaticamente se os dados vieram do KinesiOS ou do Brainn_XR.
-4. **Análise de Resultados:** Navegue pelos gráficos gerados automaticamente e consulte a aba **📖 Guia de métricas** para entender cada métrica: Amplitude de Movimento, Índice de Simetria de Robinson, Jerk RMS (suavidade), Consistência Temporal e Compensação dos Ombros.
-5. **Exportação:** em cada sessão há botões para baixar um relatório em **JSON** ou **Excel (.xlsx)** com metadados, métricas por lado, oscilação dos ombros e cada pico de flexão. Na comparação há também a exportação da tabela Início × Final com a variação.
+4. **Análise de Resultados:** Navegue pelos gráficos gerados automaticamente e consulte a aba **📖 Guia de métricas** para entender cada métrica: Amplitude de Movimento, Picos de Flexão, Evolução entre sessões e Compensação dos Ombros.
+5. **Exportação:** em cada sessão há botões para baixar o resumo em **CSV** (abre direto no Excel) ou um relatório completo em **Excel (.xlsx)** com metadados, métricas por lado, oscilação dos ombros e cada pico de flexão. Na comparação há também a exportação da tabela Início × Final com a variação.
 
 ---
 
