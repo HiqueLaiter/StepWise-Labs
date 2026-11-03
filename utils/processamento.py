@@ -15,13 +15,6 @@ COL_OMBRO_DIR  = 'ombro_dir'
 COL_TEMPO      = 'tempo_s'
 COL_FPS_BASE   = 'fps_base'
 
-# Parâmetros do pré-processamento do sinal (usados antes do cálculo do Jerk)
-FPS_ALVO              = 30.0   # taxa comum para normalização temporal (Hz)
-CORTE_PASSA_BAIXA_HZ  = 6.0    # frequência de corte do filtro anti-ruído (Hz)
-ORDEM_BUTTERWORTH     = 4
-JANELA_SAVGOL         = 9      # nº ímpar de amostras da derivada de Savitzky-Golay
-ORDEM_POLINOMIO       = 4      # precisa ser >= 3 para derivada de ordem 3
-
 # Nomes possíveis das colunas de ombro nos arquivos de origem. Ajuste aqui caso
 # os softwares exportem nomes diferentes. Se nenhum nome for encontrado, há uma
 # busca genérica por colunas que contenham "shoulder"/"ombro" + lado.
@@ -261,155 +254,11 @@ def calcular_amplitude_sessao(dados: pd.Series) -> dict:
     return {'media': float(dados.mean()), 'maxima': float(dados.max())}
 
 
-def calcular_consistencia_temporal(picos: list[dict]) -> dict:
-    """
-    Consistência temporal: média, desvio e Coeficiente de Variação (CV%) das
-    durações dos picos. Quanto menor o CV, mais regular o ritmo.
-    """
-    if not picos:
-        return {'media_duracao': 0.0, 'desvio_duracao': 0.0,
-                'cv_duracao': 0.0, 'n_picos': 0}
-
-    duracoes = np.array([p['duracao'] for p in picos])
-    media    = float(np.mean(duracoes))
-    desvio   = float(np.std(duracoes))
-    cv       = float((desvio / media * 100) if media > 0 else 0.0)
-
-    return {
-        'media_duracao':  round(media, 3),
-        'desvio_duracao': round(desvio, 3),
-        'cv_duracao':     round(cv, 2),
-        'n_picos':        len(picos),
-    }
-
-
 def amplitude_media_dos_picos(picos: list[dict]) -> float:
     """Média das amplitudes máximas dos picos de flexão (NaN se não houver picos)."""
     if not picos:
         return float('nan')
     return float(np.mean([p['amplitude_maxima'] for p in picos]))
-
-
-def calcular_indice_simetria_robinson(picos_dir: list[dict], picos_esq: list[dict]) -> dict:
-    """
-    Índice de Simetria de Robinson:
-        SI = 2 * |X_dir - X_esq| / (X_dir + X_esq) * 100 (%)
-    onde X é a amplitude média dos picos de flexão do joelho.
-    0% = simetria perfeita. Retorna NaN se algum lado não tiver picos ou se
-    a soma das amplitudes for zero (evita divisão por zero).
-    """
-    x_dir = amplitude_media_dos_picos(picos_dir)
-    x_esq = amplitude_media_dos_picos(picos_esq)
-    si = float('nan')
-    if not (math.isnan(x_dir) or math.isnan(x_esq)):
-        soma = x_dir + x_esq
-        if soma != 0:
-            si = 2.0 * abs(x_dir - x_esq) / soma * 100.0
-    return {'si_pct': si, 'x_dir': x_dir, 'x_esq': x_esq}
-
-
-# -----------------------------------------------------------------------------
-# Suavidade motora (Jerk RMS)
-# -----------------------------------------------------------------------------
-
-def _filtro_passa_baixa_fase_zero(y: np.ndarray, fps: float, corte_hz: float,
-                                  ordem: int = ORDEM_BUTTERWORTH) -> np.ndarray:
-    """
-    Passa-baixa Butterworth de fase zero (equivalente ao filtfilt) feito só com
-    numpy, no domínio da frequência: o filtfilt aplica o filtro nos dois sentidos,
-    o que resulta em resposta |H(f)|^2 = 1 / (1 + (f/fc)^(2*ordem)) e fase nula.
-    O sinal é estendido por reflexão ímpar nas bordas para reduzir efeitos de borda.
-    """
-    n = len(y)
-    pad = min(3 * int(fps), n - 1)
-    if pad > 0:
-        ini = 2 * y[0] - y[pad:0:-1]
-        fim = 2 * y[-1] - y[-2:-pad - 2:-1]
-        ext = np.concatenate([ini, y, fim])
-    else:
-        ext = y
-    freqs = np.fft.rfftfreq(len(ext), d=1.0 / fps)
-    ganho = 1.0 / (1.0 + (freqs / corte_hz) ** (2 * ordem))
-    filtrado = np.fft.irfft(np.fft.rfft(ext) * ganho, n=len(ext))
-    return filtrado[pad:pad + n] if pad > 0 else filtrado
-
-
-def _derivada_savgol(y: np.ndarray, janela: int, ordem_pol: int,
-                     deriv: int, delta: float) -> np.ndarray:
-    """
-    Derivada de Savitzky-Golay só com numpy (mesmo resultado do scipy com
-    mode='interp'): convolução com coeficientes de mínimos quadrados no miolo e
-    ajuste polinomial na primeira/última janela para as bordas.
-    """
-    m = janela // 2
-    x = np.arange(-m, m + 1, dtype=float)
-    A = np.vander(x, ordem_pol + 1, increasing=True)
-    coef = np.linalg.pinv(A)[deriv] * math.factorial(deriv) / (delta ** deriv)
-    saida = np.empty(len(y), dtype=float)
-    saida[m:len(y) - m] = np.convolve(y, coef[::-1], mode='valid')
-
-    def _borda(trecho, posicoes):
-        c = np.polynomial.polynomial.polyfit(np.arange(janela, dtype=float), trecho, ordem_pol)
-        return np.polynomial.polynomial.polyval(
-            posicoes, np.polynomial.polynomial.polyder(c, deriv)) / (delta ** deriv)
-
-    saida[:m] = _borda(y[:janela], np.arange(m, dtype=float))
-    saida[len(y) - m:] = _borda(y[-janela:], np.arange(janela - m, janela, dtype=float))
-    return saida
-
-
-def preprocessar_sinal(sinal: np.ndarray, fps: float, fps_alvo: float = FPS_ALVO):
-    """
-    Pré-processamento obrigatório antes do Jerk:
-      1) filtro passa-baixa Butterworth (fase zero) para remover ruído;
-      2) normalização temporal: reamostragem para uma taxa comum (fps_alvo),
-         tornando comparáveis o KinesiOS (28 FPS) e o Brainn_XR (24 FPS).
-    Retorna (tempo_normalizado, sinal_filtrado_normalizado).
-    """
-    y = np.asarray(sinal, dtype=float)
-    n = len(y)
-    if n < 2 or fps <= 0:
-        return np.arange(n) / max(fps, 1.0), y
-
-    corte = min(CORTE_PASSA_BAIXA_HZ, 0.45 * fps)  # sempre abaixo de Nyquist
-    y = _filtro_passa_baixa_fase_zero(y, fps, corte)
-
-    t_orig = np.arange(n) / fps
-    t_novo = np.arange(0.0, t_orig[-1], 1.0 / fps_alvo)
-    return t_novo, np.interp(t_novo, t_orig, y)
-
-
-def calcular_jerk_rms(sinal: pd.Series, fps: float, picos: list[dict],
-                      fps_alvo: float = FPS_ALVO) -> dict:
-    """
-    Jerk RMS = raiz da média dos quadrados de d³θ/dt³ (graus/s³), calculado:
-      - SOMENTE após filtragem antirruído + normalização temporal;
-      - RESTRITO às janelas dos picos de movimento ativo (repouso é ignorado,
-        para não diluir a medida).
-    Retorna NaN (rms) se não houver picos ou amostras suficientes.
-    """
-    vazio = {'rms': float('nan'), 'n_amostras': 0}
-    if not picos or fps <= 0 or fps_alvo <= 0:
-        return vazio
-
-    t, y = preprocessar_sinal(sinal.values, fps, fps_alvo)
-    if len(y) < JANELA_SAVGOL:
-        return vazio
-
-    # Terceira derivada via Savitzky-Golay, implementada só com numpy
-    jerk = _derivada_savgol(y, JANELA_SAVGOL, ORDEM_POLINOMIO, 3, 1.0 / fps_alvo)
-
-    # Máscara das janelas de movimento ativo, mapeadas para o eixo normalizado
-    mascara = np.zeros(len(t), dtype=bool)
-    for p in picos:
-        i0 = int(np.searchsorted(t, p['inicio_seg'], side='left'))
-        i1 = int(np.searchsorted(t, p['fim_seg'], side='right'))
-        mascara[i0:i1] = True
-
-    if not mascara.any():
-        return vazio
-    valores = jerk[mascara]
-    return {'rms': float(np.sqrt(np.mean(valores ** 2))), 'n_amostras': int(mascara.sum())}
 
 
 def calcular_oscilacao_ombro(dados: pd.Series) -> dict:
@@ -430,17 +279,14 @@ def calcular_oscilacao_ombro(dados: pd.Series) -> dict:
 def gerar_resumo_sessao(df: pd.DataFrame, fps: float, limiares: dict) -> dict:
     """
     Ponto de entrada principal: recebe o DataFrame e o limiar clínico do joelho
-    ({'joelho': 30.0}) e devolve picos, amplitudes, consistência, Índice de
-    Simetria de Robinson, Jerk RMS e oscilação dos ombros (se disponível).
+    ({'joelho': 30.0}) e devolve picos, amplitudes e oscilação dos ombros
+    (se disponível).
     """
     limiar_joelho = limiares.get('joelho', 30.0)
     lados = {'joelho_esq': COL_JOELHO_ESQ, 'joelho_dir': COL_JOELHO_DIR}
 
     picos      = {k: extrair_picos_marcha(df[c], fps, limiar_joelho) for k, c in lados.items()}
     amplitude  = {k: calcular_amplitude_sessao(df[c]) for k, c in lados.items()}
-    consistencia = {k: calcular_consistencia_temporal(picos[k]) for k in lados}
-    jerk       = {k: calcular_jerk_rms(df[c], fps, picos[k]) for k, c in lados.items()}
-    simetria   = calcular_indice_simetria_robinson(picos['joelho_dir'], picos['joelho_esq'])
 
     ombro = None
     if tem_ombros(df):
@@ -450,9 +296,6 @@ def gerar_resumo_sessao(df: pd.DataFrame, fps: float, limiares: dict) -> dict:
     return {
         'picos':        picos,
         'amplitude':    amplitude,
-        'consistencia': consistencia,
-        'jerk':         jerk,
-        'simetria':     simetria,
         'ombro':        ombro,
         'tempo_execucao_seg': float(len(df) / fps),
         'n_frames': len(df),
@@ -469,16 +312,11 @@ def gerar_resumo_sessao(df: pd.DataFrame, fps: float, limiares: dict) -> dict:
 
 _NOME_LADO = {'joelho_esq': 'Esquerdo', 'joelho_dir': 'Direito'}
 
-# (chave no JSON, cabeçalho legível com unidade) — ordem das colunas na tela e no Excel
+# (chave do relatório, cabeçalho legível com unidade) — ordem das colunas na tela e no Excel
 METRICAS_LADO = [
     ('amplitude_media_graus',        'Amplitude média (°)'),
     ('amplitude_maxima_graus',       'Amplitude máxima (°)'),
-    ('indice_simetria_robinson_pct', 'Índice de Simetria de Robinson (%)'),
-    ('jerk_rms_graus_por_s3',        'Jerk RMS (°/s³)'),
     ('n_picos',                      'Nº de picos'),
-    ('cv_duracao_pct',               'CV da duração (%)'),
-    ('duracao_media_picos_s',        'Duração média dos picos (s)'),
-    ('desvio_duracao_picos_s',       'Desvio da duração dos picos (s)'),
     ('amplitude_media_picos_graus',  'Amplitude média dos picos (°)'),
 ]
 
@@ -488,7 +326,7 @@ METRICAS_OMBRO = [
     ('media_graus',         'Média (°)'),
 ]
 
-# Cabeçalhos legíveis para o Excel (chaves do JSON -> título da coluna)
+# Cabeçalhos legíveis para o Excel e o CSV (chave do relatório -> título da coluna)
 CABECALHOS = {
     **dict(METRICAS_LADO), **dict(METRICAS_OMBRO),
     'lado': 'Lado', 'sessao': 'Sessão', 'pico': 'Pico',
@@ -499,7 +337,6 @@ CABECALHOS = {
     'arquivo_origem': 'Arquivo de origem', 'modo_analise': 'Modo de análise',
     'lado_analisado': 'Lado analisado', 'gerado_em': 'Gerado em', 'fps': 'FPS',
     'n_frames': 'Nº de frames', 'limiar_joelho_graus': 'Limiar do joelho (°)',
-    'jerk_pre_processamento': 'Pré-processamento do Jerk',
 }
 
 
@@ -511,21 +348,15 @@ def _val(x, casas: int = 2):
     return float('nan') if math.isnan(x) else round(x, casas)
 
 
-def _metricas_do_lado(resumo: dict, chave: str, n_lados: int) -> dict:
+def _metricas_do_lado(resumo: dict, chave: str) -> dict:
     """Todas as métricas de um lado, com as chaves de METRICAS_LADO."""
-    amp, cons, jk = resumo['amplitude'][chave], resumo['consistencia'][chave], resumo['jerk'][chave]
-    x_picos = amplitude_media_dos_picos(resumo['picos'][chave])
+    amp = resumo['amplitude'][chave]
+    picos = resumo['picos'][chave]
     return {
         'amplitude_media_graus':        _val(amp['media']),
         'amplitude_maxima_graus':       _val(amp['maxima']),
-        # Robinson compara os dois lados: só existe na análise bilateral
-        'indice_simetria_robinson_pct': _val(resumo['simetria']['si_pct']) if n_lados == 2 else float('nan'),
-        'jerk_rms_graus_por_s3':        _val(jk['rms']),
-        'n_picos':                      int(cons['n_picos']),
-        'cv_duracao_pct':               _val(cons['cv_duracao']),
-        'duracao_media_picos_s':        _val(cons['media_duracao'], 3),
-        'desvio_duracao_picos_s':       _val(cons['desvio_duracao'], 3),
-        'amplitude_media_picos_graus':  _val(x_picos),
+        'n_picos':                      len(picos),
+        'amplitude_media_picos_graus':  _val(amplitude_media_dos_picos(picos)),
     }
 
 
@@ -533,7 +364,7 @@ def tabela_resumo_lados(resumo: dict, chaves: list) -> pd.DataFrame:
     """Tabela 'Resumo por lado' (índice = Lado), usada na tela e igual à do arquivo exportado."""
     linhas = []
     for k in chaves:
-        m = _metricas_do_lado(resumo, k, len(chaves))
+        m = _metricas_do_lado(resumo, k)
         linhas.append({'Lado': _NOME_LADO[k], **{cab: m[ch] for ch, cab in METRICAS_LADO}})
     return pd.DataFrame(linhas).set_index('Lado')
 
@@ -553,15 +384,10 @@ def tabela_comparativa(res_i: dict, res_f: dict, chaves: list) -> pd.DataFrame:
     """Tabela Início × Final × Variação (índice = Métrica), usada na tela e no arquivo."""
     linhas = [{'Métrica': 'Duração total (s)', 'Início': _val(res_i['tempo_execucao_seg']),
                'Final': _val(res_f['tempo_execucao_seg'])}]
-    if len(chaves) == 2:
-        linhas.append({'Métrica': 'Índice de Simetria de Robinson (%)',
-                       'Início': _val(res_i['simetria']['si_pct']), 'Final': _val(res_f['simetria']['si_pct'])})
     itens = [('amplitude_media_graus', 'Amplitude média (°)'), ('amplitude_maxima_graus', 'Amplitude máxima (°)'),
-             ('jerk_rms_graus_por_s3', 'Jerk RMS (°/s³)'), ('cv_duracao_pct', 'CV da duração (%)'),
-             ('n_picos', 'Nº de picos'), ('duracao_media_picos_s', 'Duração média dos picos (s)'),
-             ('amplitude_media_picos_graus', 'Amplitude média dos picos (°)')]
+             ('n_picos', 'Nº de picos'), ('amplitude_media_picos_graus', 'Amplitude média dos picos (°)')]
     for k in chaves:
-        mi, mf = _metricas_do_lado(res_i, k, len(chaves)), _metricas_do_lado(res_f, k, len(chaves))
+        mi, mf = _metricas_do_lado(res_i, k), _metricas_do_lado(res_f, k)
         for ch, nome in itens:
             linhas.append({'Métrica': f'Joelho {_NOME_LADO[k]} — {nome}', 'Início': mi[ch], 'Final': mf[ch]})
     t = pd.DataFrame(linhas)
@@ -570,7 +396,7 @@ def tabela_comparativa(res_i: dict, res_f: dict, chaves: list) -> pd.DataFrame:
 
 
 # =============================================================================
-# 7. EXPORTAÇÃO ESTRUTURADA (JSON / EXCEL)
+# 7. EXPORTAÇÃO ESTRUTURADA (CSV / EXCEL)
 # =============================================================================
 
 def _limpar(obj):
@@ -597,16 +423,13 @@ def _metadados(resumo: dict, modo: str, lado: str | None) -> dict:
         'fps':                    resumo['fps'],
         'n_frames':               resumo['n_frames'],
         'limiar_joelho_graus':    resumo['limiares'].get('joelho'),
-        'jerk_pre_processamento': (f"Butterworth passa-baixa {CORTE_PASSA_BAIXA_HZ:g} Hz "
-                                   f"(ordem {ORDEM_BUTTERWORTH}) + reamostragem a {FPS_ALVO:g} Hz; "
-                                   "janelas de movimento ativo apenas"),
     }
 
 
 def _linhas_metricas(resumo, chaves, sessao=None):
     out = []
     for k in chaves:
-        linha = {'lado': _NOME_LADO[k], **_metricas_do_lado(resumo, k, len(chaves))}
+        linha = {'lado': _NOME_LADO[k], **_metricas_do_lado(resumo, k)}
         out.append({'sessao': sessao, **linha} if sessao else linha)
     return out
 
@@ -642,8 +465,8 @@ def _chaves_do_lado(lado):
 def construir_relatorio(resumo: dict, modo_analise: str, lado: str | None = None) -> dict:
     """
     Relatório de UMA sessão com tudo o que a tela mostra:
-      - metadados (duração total, software, arquivo, modo, lado, FPS, limiar, pré-processamento);
-      - métricas por lado (amplitudes, Robinson, Jerk RMS, nº de picos, CV, duração e amplitude dos picos);
+      - metadados (duração total, software, arquivo, modo, lado, FPS, limiar);
+      - métricas por lado (amplitude média e máxima, nº de picos e amplitude média dos picos);
       - oscilação dos ombros (se o arquivo tiver ombros);
       - valor e tempo de cada pico de flexão do joelho.
     'lado' ('Esquerdo'/'Direito') restringe ao membro exercitado (unilateral); None = os dois.
@@ -680,8 +503,47 @@ def construir_relatorio_comparacao(res_i: dict, res_f: dict, modo_analise: str,
     })
 
 
-def relatorio_para_json(relatorio: dict) -> bytes:
-    return json.dumps(relatorio, ensure_ascii=False, indent=2).encode('utf-8')
+def _tabela_csv_sessao(relatorio: dict) -> pd.DataFrame:
+    """Uma linha por lado: identificação da sessão + métricas do joelho + oscilação do ombro do mesmo lado
+    (as colunas 'Ombro — ...' referem-se ao ombro do lado indicado na linha)."""
+    meta = relatorio['metadados']
+    ombros = {o['lado']: o for o in relatorio.get('oscilacao_ombros', [])}
+    linhas = []
+    for m in relatorio['metricas_por_lado']:
+        linha = {
+            'Arquivo de origem': meta['arquivo_origem'],
+            'Software de origem': meta['software_origem'],
+            'Modo de análise': meta['modo_analise'],
+            'Duração total (s)': meta['tempo_total_execucao_s'],
+            'Limiar do joelho (°)': meta['limiar_joelho_graus'],
+            'Lado': m['lado'],
+        }
+        linha.update({cab: m.get(ch) for ch, cab in METRICAS_LADO})
+        o = ombros.get(m['lado'])
+        for ch, cab in METRICAS_OMBRO:
+            linha[f'Ombro — {cab}'] = o[ch] if o else None
+        linhas.append(linha)
+    return pd.DataFrame(linhas)
+
+
+def relatorio_para_csv(relatorio: dict) -> bytes:
+    """
+    CSV para abrir direto no Excel em português: separador ';', decimal ',' e UTF-8 com BOM
+    (acentos corretos). Valores indefinidos ficam como célula vazia.
+      - sessão:     uma linha por lado (identificação, métricas do joelho e do ombro);
+      - comparação: a tabela Início × Final × Variação;
+      - evolução:   uma linha por participante e sessão, com todas as métricas.
+    Os picos um a um ficam no Excel (aba Picos_joelho).
+    """
+    tipo = relatorio.get('tipo')
+    if tipo == 'evolucao':
+        tabela = pd.DataFrame(relatorio['evolucao_por_participante'])
+    elif tipo == 'comparacao':
+        tabela = _tabela_excel(relatorio['comparacao'])
+    else:
+        tabela = _tabela_csv_sessao(relatorio)
+    texto = tabela.to_csv(index=False, sep=';', decimal=',')
+    return ('\ufeff' + texto).encode('utf-8')
 
 
 def _cab(chave: str) -> str:
@@ -744,16 +606,12 @@ SEP_LADO = '__'   # 'coluna__Esquerdo' / 'coluna__Direito'
 # (id da métrica, rótulo com unidade, escopo)
 #   'lado'   -> uma série por joelho (as duas no bilateral; só a escolhida no unilateral)
 #   'ombro'  -> uma série por ombro (sempre as duas: é a postura do corpo todo)
-#   'global' -> uma série só (Robinson compara os dois joelhos: só existe no bilateral)
+#   'global' -> uma série só (vale para o participante, não para um lado)
 METRICAS_EVOLUCAO = [
     ('amplitude_media_picos_graus',  'Amplitude média dos picos (°)',           'lado'),
     ('amplitude_maxima_graus',       'Amplitude máxima (°)',                    'lado'),
     ('amplitude_media_graus',        'Amplitude média da sessão (°)',           'lado'),
-    ('indice_simetria_robinson_pct', 'Índice de Simetria de Robinson (%)',      'global'),
-    ('jerk_rms_graus_por_s3',        'Jerk RMS (°/s³)',                         'lado'),
-    ('cv_duracao_pct',               'CV da duração (%)',                       'lado'),
     ('n_picos',                      'Nº de picos',                             'lado'),
-    ('duracao_media_picos_s',        'Duração média dos picos (s)',             'lado'),
     ('ombro_pico_a_pico_graus',      'Oscilação do ombro — pico a pico (°)',    'ombro'),
     ('ombro_desvio_padrao_graus',    'Oscilação do ombro — desvio padrão (°)',  'ombro'),
     ('duracao_total_s',              'Duração total da sessão (s)',             'global'),
@@ -773,16 +631,15 @@ def ordenar_nomes_naturalmente(nomes: list) -> list:
 
 
 def linha_evolucao(resumo: dict, ordem: int) -> dict:
-    """Linha numérica de uma sessão (todas as métricas dos dois joelhos, Robinson e ombros)."""
+    """Linha numérica de uma sessão (métricas dos dois joelhos e dos ombros)."""
     linha = {
         'sessao': int(ordem),
         'arquivo': resumo.get('arquivo', ''),
         'limiar_joelho_graus': resumo['limiares'].get('joelho'),
         'duracao_total_s': _val(resumo['tempo_execucao_seg']),
-        'indice_simetria_robinson_pct': _val(resumo['simetria']['si_pct']),
     }
     for k, nome in _NOME_LADO.items():
-        m = _metricas_do_lado(resumo, k, 2)
+        m = _metricas_do_lado(resumo, k)
         for ch in _METRICAS_JOELHO:
             linha[f'{ch}{SEP_LADO}{nome}'] = m[ch]
     for k, nome in _NOMES_OMBRO:
@@ -808,12 +665,10 @@ def tabela_evolucao_longa(participantes: dict) -> pd.DataFrame:
 def series_da_metrica(metrica: str, bilateral: bool = True, lado: str | None = None) -> list:
     """
     Séries (coluna, rótulo) que representam a métrica no gráfico.
-    Devolve [] quando a métrica não se aplica (Robinson no unilateral).
+    No unilateral, as métricas de joelho trazem só o lado escolhido.
     """
     rotulo, escopo = _ROTULO_EVO[metrica], _ESCOPO_EVO[metrica]
     if escopo == 'global':
-        if metrica == 'indice_simetria_robinson_pct' and not bilateral:
-            return []
         return [(metrica, rotulo, None)]
     if escopo == 'lado' and not bilateral:
         lados = [lado or 'Esquerdo']
@@ -823,8 +678,8 @@ def series_da_metrica(metrica: str, bilateral: bool = True, lado: str | None = N
 
 
 def metricas_disponiveis(bilateral: bool = True) -> list:
-    """Ids das métricas que fazem sentido no modo (Robinson só no bilateral)."""
-    return [m for m, _, _ in METRICAS_EVOLUCAO if bilateral or m != 'indice_simetria_robinson_pct']
+    """Ids das métricas oferecidas na evolução (as mesmas nos modos bilateral e unilateral)."""
+    return [m for m, _, _ in METRICAS_EVOLUCAO]
 
 
 def rotulo_metrica(metrica: str) -> str:
@@ -875,9 +730,6 @@ def _meta_evolucao(participantes: dict, modo: str, lado: str | None) -> dict:
         'sessoes_por_participante': {n: len(d['linhas']) for n, d in participantes.items()},
         'limiar_joelho_graus_por_participante': {n: d.get('limiar') for n, d in participantes.items()},
         'gerado_em': pd.Timestamp.now().strftime('%Y-%m-%d %H:%M:%S'),
-        'jerk_pre_processamento': (f"Butterworth passa-baixa {CORTE_PASSA_BAIXA_HZ:g} Hz "
-                                   f"(ordem {ORDEM_BUTTERWORTH}) + reamostragem a {FPS_ALVO:g} Hz; "
-                                   "janelas de movimento ativo apenas"),
     }
 
 

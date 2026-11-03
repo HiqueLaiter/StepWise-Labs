@@ -7,5 +7,15 @@ Pacientes - KinesiOS/
 # Dados de pacientes e relatórios exportados (nunca versionar)
 dados/
 exemplos/
+omnifisio_sessao.*
+omnifisio_comparacao.*
+omnifisio_evolucao.*
 stepwise_sessao.*
 stepwise_comparacao.*
+stepwise_evolucao.*
+
+# Verificação local (não vai para o GitHub)
+validacao_sintetica.py
+dados_sinteticos/
+tests/
+.pytest_cache/
