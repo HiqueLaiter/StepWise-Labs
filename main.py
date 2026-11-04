@@ -1,6 +1,7 @@
 import streamlit as st
 from PIL import Image
 from views import visualizacao_obstacles
+from views import visualizacao_estatistica  # membros superiores (e-Puzzle, ombros)
 
 # =============================================================================
 # CONFIGURAÇÃO DA PÁGINA
@@ -36,6 +37,7 @@ st.image(_logo_do_tema(), width=300)
 abas = st.tabs([
     "🏠 Início",
     "🦵 Membros Inferiores",
+    "🦾 Membros Superiores",
 ])
 
 # -----------------------------------------------------------------------
@@ -64,6 +66,7 @@ with abas[0]:
         | Aba | Descrição |
         |---|---|
         | 🦵 Membros Inferiores | Análise da marcha estacionária: flexão de joelho (amplitude e picos), evolução entre sessões e compensação dos ombros |
+        | 🦾 Membros Superiores | Análise dos ombros durante o e-Puzzle: amplitude, picos de movimento e classificação por duração (rápido, moderado, lento), início vs final |
 
         ---
 
@@ -78,3 +81,9 @@ with abas[0]:
 # -----------------------------------------------------------------------
 with abas[1]:
     visualizacao_obstacles.carregar()
+
+# -----------------------------------------------------------------------
+# ABA 3 — Membros Superiores (e-Puzzle, vinda da IC)
+# -----------------------------------------------------------------------
+with abas[2]:
+    visualizacao_estatistica.carregar()
